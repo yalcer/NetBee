@@ -1,0 +1,2 @@
+# Built-in BusyBox syslogd rotation safeguard for RAM /var/log (256 KB x 3 files)
+SYSLOGD_ARGS="-s 256 -b 3"
