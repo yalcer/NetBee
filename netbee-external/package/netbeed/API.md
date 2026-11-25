@@ -4,7 +4,7 @@
 It listens on `https://192.168.10.1:443` (with HTTP `:80` → HTTPS redirect) and serves any static frontend placed in `/usr/share/netbee/web/` (with SPA fallback to `index.html`).
 
 In QEMU (`make qemu`), the API is forwarded to `https://127.0.0.1:8443`.
-For local frontend dev servers (e.g. Vite on `http://localhost:5173`), add your origin to `cors_origins` in `/etc/netbee/netbeed.json`.
+For local frontend dev servers (e.g. Vite on `http://localhost:5173`), add your explicit origin URL to `cors_origins` in `/etc/netbee/netbeed.json` (wildcard `*` is intentionally disallowed on credentialed endpoints).
 
 ---
 
@@ -73,7 +73,7 @@ Default credentials on first boot: **`admin` / `netbee`** (`must_change_password
 | `GET` | `/api/v1/firewall/config` | Toggles (`transparent_dns`, `expose_wireguard`, `flow_offload`), custom rules & port forwards |
 | `PUT` | `/api/v1/firewall/config` | Replace full firewall config (dry-run validated via `nft -c` + **60s rollback guard**) |
 | `PATCH` | `/api/v1/firewall/toggles` | Partial toggle update (`transparent_dns`, `expose_wireguard`, `wireguard_port`, `flow_offload`) without overwriting rules |
-| `POST` | `/api/v1/firewall/rules` | Add custom filter rule (`input`/`forward` → `custom_input`/`custom_forward`, IPv4/IPv6, `accept`/`drop`/`reject`) |
+| `POST` | `/api/v1/firewall/rules` | Add custom filter rule (`input`/`forward` → `custom_input`/`custom_forward`, `tcp`/`udp`/`icmp`/`icmpv6`/`any`, `accept`/`drop`/`reject`) |
 | `DELETE` | `/api/v1/firewall/rules/{id}` | Delete custom rule |
 | `POST` | `/api/v1/firewall/port-forwards` | Add DNAT port forward (`protocol`: `tcp`/`udp`/`both`, `ext_port`, `int_ip`, `int_port` — use `0` for 1:1 range) |
 | `DELETE` | `/api/v1/firewall/port-forwards/{id}` | Delete port forward |

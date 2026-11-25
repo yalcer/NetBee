@@ -18,9 +18,17 @@ func (s *Server) handleDiagPing(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid host")
 		return
 	}
+	release, ok := s.acquireDiagSlot()
+	if !ok {
+		writeErr(w, http.StatusTooManyRequests, "too many diagnostic tasks running; please wait")
+		return
+	}
+	defer release()
+
 	if req.Count <= 0 || req.Count > 10 {
 		req.Count = 4
 	}
+	_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(30 * time.Second))
 	res, err := sys.Run(20*time.Second, "ping", "-c", fmt.Sprintf("%d", req.Count), "-W", "2", req.Host)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok":     err == nil,
@@ -37,15 +45,23 @@ func (s *Server) handleDiagMTR(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid host")
 		return
 	}
+	release, ok := s.acquireDiagSlot()
+	if !ok {
+		writeErr(w, http.StatusTooManyRequests, "too many diagnostic tasks running; please wait")
+		return
+	}
+	defer release()
+
 	if req.Cycles <= 0 || req.Cycles > 10 {
 		req.Cycles = 5
 	}
+	_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(40 * time.Second))
 	res, err := sys.Run(30*time.Second, "mtr", "-j", "-c", fmt.Sprintf("%d", req.Cycles), req.Host)
 	if err != nil && strings.TrimSpace(res.Stdout) == "" {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeRawJSON(w, http.StatusOK, []byte(res.Stdout))
+	writeValidatedRawJSON(w, http.StatusOK, []byte(res.Stdout), "{}")
 }
 
 func (s *Server) handleDiagIperf3(w http.ResponseWriter, r *http.Request) {
@@ -66,9 +82,17 @@ func (s *Server) handleDiagIperf3(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid port")
 		return
 	}
+	release, ok := s.acquireDiagSlot()
+	if !ok {
+		writeErr(w, http.StatusTooManyRequests, "too many diagnostic tasks running; please wait")
+		return
+	}
+	defer release()
+
 	if req.Duration <= 0 || req.Duration > 15 {
 		req.Duration = 5
 	}
+	_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(time.Duration(req.Duration+20) * time.Second))
 	args := []string{"-c", req.Host, "-p", fmt.Sprintf("%d", req.Port), "-t", fmt.Sprintf("%d", req.Duration), "-J"}
 	if req.Reverse {
 		args = append(args, "-R")
@@ -78,7 +102,7 @@ func (s *Server) handleDiagIperf3(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeRawJSON(w, http.StatusOK, []byte(res.Stdout))
+	writeValidatedRawJSON(w, http.StatusOK, []byte(res.Stdout), "{}")
 }
 
 func (s *Server) handleDiagDNS(w http.ResponseWriter, r *http.Request) {
@@ -98,6 +122,13 @@ func (s *Server) handleDiagDNS(w http.ResponseWriter, r *http.Request) {
 		}
 		args = append(args, req.Server)
 	}
+	release, ok := s.acquireDiagSlot()
+	if !ok {
+		writeErr(w, http.StatusTooManyRequests, "too many diagnostic tasks running; please wait")
+		return
+	}
+	defer release()
+
 	res, err := sys.Run(10*time.Second, "nslookup", args...)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok":     err == nil,
@@ -135,6 +166,10 @@ func (s *Server) handleDiagCapture(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, http.StatusBadRequest, "invalid port")
 			return
 		}
+		if req.Proto == "icmp" || req.Proto == "arp" {
+			writeErr(w, http.StatusBadRequest, "port filter cannot be combined with icmp or arp")
+			return
+		}
 		if len(expr) > 0 {
 			expr = append(expr, "and")
 		}
@@ -142,6 +177,14 @@ func (s *Server) handleDiagCapture(w http.ResponseWriter, r *http.Request) {
 	}
 	args = append(args, expr...)
 
+	release, ok := s.acquireDiagSlot()
+	if !ok {
+		writeErr(w, http.StatusTooManyRequests, "too many diagnostic tasks running; please wait")
+		return
+	}
+	defer release()
+
+	_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(20 * time.Second))
 	res, err := sys.Run(12*time.Second, "tcpdump", args...)
 	packets := []string{}
 	if trimmed := strings.TrimSpace(res.Stdout); trimmed != "" {
@@ -153,4 +196,3 @@ func (s *Server) handleDiagCapture(w http.ResponseWriter, r *http.Request) {
 		"summary": strings.TrimSpace(res.Stderr),
 	})
 }
-

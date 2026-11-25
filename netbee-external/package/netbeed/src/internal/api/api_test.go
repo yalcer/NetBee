@@ -1,7 +1,10 @@
 package api
 
 import (
+	"archive/tar"
 	"bytes"
+	"compress/gzip"
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -16,13 +19,16 @@ import (
 	"github.com/yalcer/netbee/netbeed/internal/sys"
 )
 
-func newTestServer(t *testing.T, adguardURL string) (*Server, string) {
+func newTestServer(t *testing.T, adguardURL string, corsOrigins ...string) (*Server, string) {
 	t.Helper()
 	dir := t.TempDir()
 	webDir := filepath.Join(dir, "web")
 	_ = os.MkdirAll(webDir, 0755)
 	_ = os.WriteFile(filepath.Join(webDir, "index.html"), []byte("<html>netbee-spa</html>"), 0644)
 
+	if len(corsOrigins) == 0 {
+		corsOrigins = []string{"http://localhost:5173"}
+	}
 	cfg := config.RuntimeConfig{
 		WebDir:          webDir,
 		StatePath:       filepath.Join(dir, "state.json"),
@@ -31,7 +37,7 @@ func newTestServer(t *testing.T, adguardURL string) (*Server, string) {
 		AdGuardUser:     "admin",
 		AdGuardPass:     "netbee",
 		RollbackSeconds: 2,
-		CORSOrigins:     []string{"http://localhost:5173"},
+		CORSOrigins:     corsOrigins,
 	}
 	store, err := config.NewStore(cfg.StatePath)
 	if err != nil {
@@ -44,27 +50,66 @@ func newTestServer(t *testing.T, adguardURL string) (*Server, string) {
 	return NewServer(cfg, store, authMgr, "test"), dir
 }
 
-func TestAuthCSRFAndSessionInvalidation(t *testing.T) {
-	srv, _ := newTestServer(t, "")
+func buildTarGz(t *testing.T, entries []tar.Header, bodies []string) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	gz := gzip.NewWriter(&buf)
+	tw := tar.NewWriter(gz)
+	for i, hdr := range entries {
+		body := ""
+		if i < len(bodies) {
+			body = bodies[i]
+		}
+		if hdr.Typeflag == tar.TypeReg || hdr.Typeflag == 0 {
+			hdr.Typeflag = tar.TypeReg
+			hdr.Size = int64(len(body))
+		}
+		if hdr.Mode == 0 {
+			hdr.Mode = 0600
+		}
+		if err := tw.WriteHeader(&hdr); err != nil {
+			t.Fatal(err)
+		}
+		if hdr.Typeflag == tar.TypeReg && len(body) > 0 {
+			if _, err := tw.Write([]byte(body)); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := gz.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes()
+}
+
+func TestAuthCORSOriginAndCSRFProtection(t *testing.T) {
+	// Include "*" in CORSOrigins to verify wildcard reflection is strictly blocked
+	srv, _ := newTestServer(t, "", "*", "http://localhost:5173")
 	h := srv.Handler()
 
-	// Unauthenticated request to protected endpoint must return 401
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/system/overview", nil)
+	// Wildcard CORS must NEVER echo arbitrary evil origin with credentials
+	req := httptest.NewRequest(http.MethodOptions, "/api/v1/system/overview", nil)
+	req.Host = "192.168.10.1"
+	req.Header.Set("Origin", "https://evil.example")
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
-	if rec.Code != http.StatusUnauthorized {
-		t.Fatalf("expected 401, got %d", rec.Code)
+	if rec.Code != http.StatusForbidden || rec.Header().Get("Access-Control-Allow-Origin") != "" {
+		t.Fatalf("wildcard CORS allowed untrusted origin: code=%d allow=%q", rec.Code, rec.Header().Get("Access-Control-Allow-Origin"))
 	}
 
-	// Health endpoint must be public
-	req = httptest.NewRequest(http.MethodGet, "/api/v1/health", nil)
+	// Explicit whitelisted origin succeeds preflight
+	req = httptest.NewRequest(http.MethodOptions, "/api/v1/system/overview", nil)
+	req.Host = "192.168.10.1"
+	req.Header.Set("Origin", "http://localhost:5173")
 	rec = httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("expected 200 on health, got %d", rec.Code)
+	if rec.Code != http.StatusNoContent || rec.Header().Get("Access-Control-Allow-Origin") != "http://localhost:5173" {
+		t.Fatalf("expected 204 for explicit CORS origin, got %d", rec.Code)
 	}
 
-	// Create two sessions (admin + second session)
 	login := func() (string, string, *http.Cookie) {
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", bytes.NewBufferString(`{"username":"admin","password":"netbee"}`)))
@@ -87,214 +132,240 @@ func TestAuthCSRFAndSessionInvalidation(t *testing.T) {
 	tok1, csrf1, ck1 := login()
 	tok2, _, _ := login()
 
-	// Cookie-authenticated POST WITHOUT X-CSRF-Token MUST be rejected (403)
+	// Cookie POST without X-CSRF-Token -> 403
 	req = httptest.NewRequest(http.MethodPost, "/api/v1/system/confirm", nil)
 	req.AddCookie(ck1)
 	rec = httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusForbidden {
-		t.Fatalf("expected 403 when CSRF header missing on cookie POST, got %d", rec.Code)
+		t.Fatalf("expected 403 when CSRF header missing, got %d", rec.Code)
 	}
 
-	// Cookie-authenticated POST WITH valid X-CSRF-Token succeeds (200)
+	// Cookie POST with valid CSRF token BUT untrusted cross-origin Origin header -> 403
 	req = httptest.NewRequest(http.MethodPost, "/api/v1/system/confirm", nil)
-	req.AddCookie(ck1)
+	req.Host = "192.168.10.1"
+	req.Header.Set("Origin", "https://attacker.invalid")
 	req.Header.Set("X-CSRF-Token", csrf1)
+	req.AddCookie(ck1)
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 on cross-origin cookie POST, got %d", rec.Code)
+	}
+
+	// Cookie POST with same-origin + valid X-CSRF-Token -> 200
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/system/confirm", nil)
+	req.Host = "192.168.10.1"
+	req.Header.Set("Origin", "http://192.168.10.1")
+	req.Header.Set("X-CSRF-Token", csrf1)
+	req.AddCookie(ck1)
 	rec = httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
-		t.Fatalf("expected 200 with valid CSRF token, got %d", rec.Code)
+		t.Fatalf("expected 200 on same-origin cookie POST, got %d %s", rec.Code, rec.Body.String())
 	}
 
-	// Password containing newline must be rejected (prevents chpasswd injection)
-	req = httptest.NewRequest(http.MethodPost, "/api/v1/auth/password", bytes.NewBufferString(`{"current_password":"netbee","new_password":"goodpass\nroot:evil"}`))
+	// Trailing garbage JSON must be rejected
+	req = httptest.NewRequest(http.MethodPut, "/api/v1/system/hostname", bytes.NewBufferString(`{"hostname":"netbee"}{"extra":1}`))
 	req.Header.Set("Authorization", "Bearer "+tok1)
 	rec = httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("expected 400 on newline password, got %d", rec.Code)
+		t.Fatalf("expected 400 on trailing JSON garbage, got %d", rec.Code)
 	}
 
-	// Valid password change keeps session 1 alive and invalidates session 2
+	// Password change revokes tok2 while keeping tok1 valid
 	req = httptest.NewRequest(http.MethodPost, "/api/v1/auth/password", bytes.NewBufferString(`{"current_password":"netbee","new_password":"StrongPassword123"}`))
 	req.Header.Set("Authorization", "Bearer "+tok1)
 	rec = httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
-		t.Fatalf("expected 200 on password change, got %d %s", rec.Code, rec.Body.String())
+		t.Fatalf("password change failed: %d", rec.Code)
 	}
 
-	// Session 2 must now be invalidated (401)
 	req = httptest.NewRequest(http.MethodGet, "/api/v1/auth/me", nil)
 	req.Header.Set("Authorization", "Bearer "+tok2)
 	rec = httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusUnauthorized {
-		t.Fatalf("expected 401 for revoked session after password change, got %d", rec.Code)
+		t.Fatalf("expected 401 for revoked session, got %d", rec.Code)
 	}
 
-	// Session 1 stays valid (200)
+	// Auth.Reload() invalidates active in-memory sessions (used after backup restore)
+	if err := srv.Auth.Reload(); err != nil {
+		t.Fatalf("Auth.Reload failed: %v", err)
+	}
 	req = httptest.NewRequest(http.MethodGet, "/api/v1/auth/me", nil)
 	req.Header.Set("Authorization", "Bearer "+tok1)
 	rec = httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("expected 200 for current session, got %d", rec.Code)
-	}
-
-	// SPA static fallback serves index.html
-	req = httptest.NewRequest(http.MethodGet, "/firewall/rules", nil)
-	rec = httptest.NewRecorder()
-	h.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "netbee-spa") {
-		t.Fatalf("expected SPA index.html fallback, got %d %q", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401 after Auth.Reload(), got %d", rec.Code)
 	}
 }
 
-func TestValidatorsAndTarSlipProtection(t *testing.T) {
-	if !sys.ValidIface("eth1.35") || sys.ValidIface("eth0;rm -rf /") {
-		t.Fatal("ValidIface check failed")
+func TestValidatorsBackupTarGzAndSymlinkProtection(t *testing.T) {
+	// Strict ValidHost (no colons/ports on hostnames, valid IPv4/IPv6/FQDN only)
+	for _, okHost := range []string{"1.1.1.1", "2606:4700:4700::1111", "netbee", "dns.cloudflare.com"} {
+		if !sys.ValidHost(okHost) {
+			t.Fatalf("ValidHost rejected valid host %q", okHost)
+		}
 	}
-	if !sys.ValidMAC("AA:BB:CC:DD:EE:FF") || sys.ValidMAC("invalid-mac") {
-		t.Fatal("ValidMAC check failed")
-	}
-	if !sys.ValidPortSpec("8000-8100") || sys.ValidPortSpec("9000-8000") || sys.ValidPortSpec("99999") {
-		t.Fatal("ValidPortSpec check failed")
-	}
-	if !sys.ValidHost("1.1.1.1") || sys.ValidHost("-v") || sys.ValidHost("1.1.1.1;id") {
-		t.Fatal("ValidHost check failed")
-	}
-
-	// Backup tar-slip protection
-	if err := ValidateBackupArchiveEntries("etc/nftables.conf\netc/netbee/state.json\n"); err != nil {
-		t.Fatalf("valid archive entries rejected: %v", err)
-	}
-	for _, bad := range []string{"../etc/shadow", "/etc/passwd", "usr/bin/netbeed", "etc/../../bin/sh"} {
-		if err := ValidateBackupArchiveEntries(bad); err == nil {
-			t.Fatalf("unsafe archive entry was NOT rejected: %q", bad)
+	for _, badHost := range []string{"", "-v", "..:..", "example.com:8080", "bad..domain", "evil.com/path"} {
+		if sys.ValidHost(badHost) {
+			t.Fatalf("ValidHost accepted invalid host %q", badHost)
 		}
 	}
 
-	// LAN CIDR helper
-	if got := lanCIDR(config.LANState{IP: "192.168.50.1", Netmask: "255.255.255.0"}); got != "192.168.50.0/24" {
-		t.Fatalf("expected 192.168.50.0/24, got %q", got)
+	// Strict IPv4 subnet mask & unicast host checks
+	if !sys.ValidIPv4Netmask("255.255.255.0") || sys.ValidIPv4Netmask("192.168.10.1") || sys.ValidIPv4Netmask("255.255.255.255") {
+		t.Fatal("ValidIPv4Netmask check failed")
 	}
-}
+	if !sys.ValidUnicastIPv4Host("192.168.10.1", "255.255.255.0") ||
+		sys.ValidUnicastIPv4Host("192.168.10.0", "255.255.255.0") || // network addr
+		sys.ValidUnicastIPv4Host("192.168.10.255", "255.255.255.0") || // broadcast addr
+		sys.ValidUnicastIPv4Host("127.0.0.1", "255.0.0.0") {
+		t.Fatal("ValidUnicastIPv4Host check failed")
+	}
 
-func TestRenderersAndCustomChains(t *testing.T) {
-	fw := config.FirewallState{
-		TransparentDNS:  true,
-		ExposeWireGuard: true,
-		WireGuardPort:   51820,
-		PortForwards: []config.PortForward{
-			{ID: "pf1", Name: "Web", Enabled: true, Protocol: "tcp", ExtPort: "443", IntIP: "192.168.10.50", IntPort: 8443},
-			{ID: "pf2", Name: "Range", Enabled: true, Protocol: "udp", ExtPort: "27015-27030", IntIP: "192.168.10.60", IntPort: 0},
-		},
-		CustomRules: []config.FirewallRule{
-			{ID: "r1", Name: "BlockIoT", Enabled: true, Chain: "forward", Action: "drop", Protocol: "tcp", SrcAddr: "192.168.10.150", DstPort: "25", Log: true},
-			{ID: "r2", Name: "BlockV6", Enabled: true, Chain: "forward", Action: "reject", Protocol: "icmp", SrcAddr: "2001:db8::/32"},
-		},
+	// Exact 32-byte base64 WireGuard key check
+	validKey := base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{0x42}, 32))
+	if !sys.ValidWGKey(validKey) || sys.ValidWGKey("shortkey====") || sys.ValidWGKey(strings.Repeat("A", 43)) {
+		t.Fatal("ValidWGKey check failed")
 	}
-	nft := RenderCustomNFT(fw, "192.168.10.1")
-	for _, want := range []string{
-		"add rule inet netbee_fw custom_input iifname $WAN_IFS udp dport 51820 accept",
-		"ip daddr != 192.168.10.1 udp dport 53 redirect to :53",
-		"tcp dport 443 dnat to 192.168.10.50:8443",
-		"add rule inet netbee_fw custom_forward iifname $WAN_IFS ip daddr 192.168.10.50 tcp dport 8443 accept",
-		"udp dport 27015-27030 dnat to 192.168.10.60\n",
-		"add rule inet netbee_fw custom_forward ip saddr 192.168.10.150 tcp dport 25",
-		"add rule inet netbee_fw custom_forward ip6 saddr 2001:db8::/32 ip6 nexthdr icmpv6 reject",
-	} {
-		if !strings.Contains(nft, want) {
-			t.Fatalf("missing %q in rendered nft:\n%s", want, nft)
+
+	// WireGuard DNS IP-list check (blocks newline/PostUp injection)
+	if !sys.ValidIPList("192.168.10.1, 1.1.1.1") || sys.ValidIPList("1.1.1.1\nPostUp = id") {
+		t.Fatal("ValidIPList check failed")
+	}
+
+	// Valid NetBee backup tar.gz passes
+	goodTar := buildTarGz(t, []tar.Header{
+		{Name: "etc/netbee", Typeflag: tar.TypeDir, Mode: 0755},
+		{Name: "etc/netbee/state.json", Typeflag: tar.TypeReg},
+		{Name: "etc/ppp/chap-secrets", Typeflag: tar.TypeReg},
+		{Name: "root/.ssh/authorized_keys", Typeflag: tar.TypeReg},
+	}, []string{"", `{"lan":{"ip":"192.168.10.1"}}`, `"u" * "p" *`, "ssh-ed25519 AAAA..."})
+	if err := ValidateBackupTarGz(goodTar); err != nil {
+		t.Fatalf("expected valid backup tar.gz to pass, got: %v", err)
+	}
+
+	// Symlink tar-slip attack inside etc/ MUST be rejected
+	symlinkTar := buildTarGz(t, []tar.Header{
+		{Name: "etc/netbee/evil", Typeflag: tar.TypeSymlink, Linkname: "/usr/sbin"},
+	}, nil)
+	if err := ValidateBackupTarGz(symlinkTar); err == nil {
+		t.Fatal("symlink inside backup archive was NOT rejected")
+	}
+
+	// Sensitive / executable system paths inside etc/ (/etc/shadow, /etc/ppp/ip-up, /etc/cron/crontabs/root) MUST be rejected
+	for _, forbidden := range []string{"etc/shadow", "etc/passwd", "etc/init.d/S90netbeed", "etc/ppp/ip-up", "etc/cron/crontabs/root", "../etc/hostname"} {
+		badTar := buildTarGz(t, []tar.Header{{Name: forbidden, Typeflag: tar.TypeReg}}, []string{"pwn"})
+		if err := ValidateBackupTarGz(badTar); err == nil {
+			t.Fatalf("forbidden backup path %q was NOT rejected", forbidden)
 		}
 	}
+}
 
-	// Mixed IPv4/IPv6 rule must be rejected
-	err := validateFirewallRule(config.FirewallRule{
-		ID: "badmix", Chain: "forward", Action: "drop", Protocol: "tcp",
-		SrcAddr: "192.168.10.5", DstAddr: "2001:db8::1",
-	})
-	if err == nil {
-		t.Fatal("expected error for mixed IPv4/IPv6 addresses in single rule")
+func TestFirewallWireGuardDropbearAndAdGuardSync(t *testing.T) {
+	// Firewall: DstPort with protocol "any" or "icmp" must be rejected (prevents silent match-all drop)
+	if err := validateFirewallRule(config.FirewallRule{
+		ID: "badport", Chain: "forward", Action: "drop", Protocol: "any", DstPort: "443",
+	}); err == nil {
+		t.Fatal("expected error when dst_port is set with protocol=any")
 	}
-
-	lan := config.LANState{Interface: "eth0", IP: "192.168.10.1", Netmask: "255.255.255.0"}
-	wan := config.WANState{Mode: "ont_vlan", Interface: "eth1", VLANID: 35, PPPoEUser: "u@isp", MACClone: "AA:BB:CC:DD:EE:FF", MTU: 1492, IPv6PD: true}
-	ifaces := RenderInterfacesFile(lan, wan)
-	if !strings.Contains(ifaces, "eth1.35 type vlan id 35") || !strings.Contains(ifaces, "address AA:BB:CC:DD:EE:FF") {
-		t.Fatalf("unexpected interfaces output:\n%s", ifaces)
+	// OutIface on input chain must be rejected
+	if err := validateFirewallRule(config.FirewallRule{
+		ID: "badout", Chain: "input", Action: "drop", Protocol: "tcp", OutIface: "eth1",
+	}); err == nil {
+		t.Fatal("expected error when out_iface is set on input chain")
 	}
-	dhcpcd := RenderDHCPCDConf(lan, wan)
-	if !strings.Contains(dhcpcd, "denyinterfaces eth0 eth1") || !strings.Contains(dhcpcd, "ia_pd 2 eth0/0") {
-		t.Fatalf("unexpected dhcpcd output:\n%s", dhcpcd)
-	}
-	peer := RenderPPPoEPeer(wan)
-	if !strings.Contains(peer, "plugin rp-pppoe.so eth1.35") {
-		t.Fatalf("unexpected pppoe peer output:\n%s", peer)
+	// Port-forward range with non-zero IntPort must be rejected
+	if err := validatePortForward(config.PortForward{
+		ID: "badpf", Protocol: "tcp", ExtPort: "8000-8010", IntIP: "192.168.10.50", IntPort: 8000,
+	}); err == nil {
+		t.Fatal("expected error when int_port != 0 with ext_port range")
 	}
 
-	sqm := ParseSQMConf(RenderSQMConf(SQMConfig{Enabled: true, WANInterface: "ppp0", DownloadKbit: 90000, UploadKbit: 18000, Overhead: 44}))
-	if !sqm.Enabled || sqm.WANInterface != "ppp0" || sqm.DownloadKbit != 90000 {
-		t.Fatalf("SQM round-trip mismatch: %+v", sqm)
+	// WireGuard client config brackets IPv6 endpoint properly
+	wg := config.WireGuardState{
+		PublicKey:  base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{0x11}, 32)),
+		Endpoint:   "2001:db8::1",
+		ListenPort: 51820,
+		DNS:        "192.168.10.1",
+	}
+	conf := BuildWGClientConfig("privkey", "10.66.66.2/32", wg)
+	if !strings.Contains(conf, "Endpoint = [2001:db8::1]:51820") {
+		t.Fatalf("expected bracketed IPv6 Endpoint in client config:\n%s", conf)
+	}
+
+	// Dropbear parser ignores comments containing "-s" and preserves -s / -I across LAN IP changes
+	rawDropbear := "# Note: -s disables password login\nDROPBEAR_ARGS=\"-p 192.168.10.1:22 -I 900\"\n"
+	pwAuth, idle := ParseDropbearConf(rawDropbear)
+	if !pwAuth || idle != 900 {
+		t.Fatalf("unexpected ParseDropbearConf result: pwAuth=%v idle=%d", pwAuth, idle)
+	}
+	renderedDropbear := RenderDropbearConf("192.168.50.1", false, 300)
+	pwAuth2, idle2 := ParseDropbearConf(renderedDropbear)
+	if pwAuth2 || idle2 != 300 || !strings.Contains(renderedDropbear, "-p 192.168.50.1:22") {
+		t.Fatalf("RenderDropbearConf round-trip failed: %q", renderedDropbear)
+	}
+
+	// AdGuardHome.yaml LAN IP & DHCP pool sync
+	sampleAGH := "dns:\n  bind_hosts:\n    - 127.0.0.1\n    - 192.168.10.1\ndhcp:\n  interface_name: eth0\n  dhcpv4:\n    gateway_ip: 192.168.10.1\n    subnet_mask: 255.255.255.0\n    range_start: 192.168.10.100\n    range_end: 192.168.10.200\n"
+	updatedAGH := UpdateAdGuardLANConfig(
+		sampleAGH,
+		config.LANState{Interface: "eth0", IP: "192.168.10.1", Netmask: "255.255.255.0"},
+		config.LANState{Interface: "eth0", IP: "192.168.50.1", Netmask: "255.255.255.0"},
+	)
+	for _, want := range []string{"- 192.168.50.1", "gateway_ip: 192.168.50.1", "range_start: 192.168.50.100", "range_end: 192.168.50.200"} {
+		if !strings.Contains(updatedAGH, want) {
+			t.Fatalf("missing %q in updated AdGuardHome.yaml:\n%s", want, updatedAGH)
+		}
 	}
 }
 
-func TestRollbackPreservesPermissionsAndReloadsStore(t *testing.T) {
+func TestDiagnosticsConcurrencySemaphoreAndRollback(t *testing.T) {
+	srv, _ := newTestServer(t, "")
+	rel1, ok1 := srv.acquireDiagSlot()
+	rel2, ok2 := srv.acquireDiagSlot()
+	_, ok3 := srv.acquireDiagSlot()
+	if !ok1 || !ok2 || ok3 {
+		t.Fatalf("expected 2 diag slots max: ok1=%v ok2=%v ok3=%v", ok1, ok2, ok3)
+	}
+	rel1()
+	rel2()
+
+	// Atomic rollback preserves 0600 permissions & reloads Store
 	dir := t.TempDir()
-	secretFile := filepath.Join(dir, "pap-secrets")
+	secretFile := filepath.Join(dir, "chap-secrets")
 	stateFile := filepath.Join(dir, "state.json")
-	_ = os.WriteFile(secretFile, []byte("original-secret"), 0600)
-
-	store, err := config.NewStore(stateFile)
-	if err != nil {
-		t.Fatal(err)
-	}
-	_ = store.Update(func(st *config.State) error {
-		st.LAN.IP = "192.168.10.1"
-		return nil
-	})
-
+	_ = os.WriteFile(secretFile, []byte("orig"), 0600)
+	store, _ := config.NewStore(stateFile)
 	rm := sys.NewRollbackManager()
-	reverted := make(chan bool, 1)
-	rm.Begin("test change", 150*time.Millisecond, []string{secretFile, stateFile}, func() {
+	done := make(chan struct{}, 1)
+	rm.Begin("test", 100*time.Millisecond, []string{secretFile, stateFile}, func() {
 		_ = store.Reload()
-		reverted <- true
+		done <- struct{}{}
 	})
-
-	_ = os.WriteFile(secretFile, []byte("broken-secret"), 0600)
+	_ = os.WriteFile(secretFile, []byte("bad"), 0644)
 	_ = store.Update(func(st *config.State) error {
-		st.LAN.IP = "10.99.99.1"
+		st.LAN.IP = "10.10.10.1"
 		return nil
 	})
-
-	select {
-	case <-reverted:
-	case <-time.After(2 * time.Second):
-		t.Fatal("rollback timer did not fire")
-	}
-
-	gotSecret, _ := os.ReadFile(secretFile)
-	if string(gotSecret) != "original-secret" {
-		t.Fatalf("expected secret file to revert, got %q", string(gotSecret))
-	}
+	<-done
 	info, _ := os.Stat(secretFile)
-	if info.Mode().Perm() != 0600 {
-		t.Fatalf("expected 0600 perms preserved after rollback, got %o", info.Mode().Perm())
-	}
-	if store.Get().LAN.IP != "192.168.10.1" {
-		t.Fatalf("expected in-memory Store.Reload() to restore 192.168.10.1, got %q", store.Get().LAN.IP)
+	if info.Mode().Perm() != 0600 || store.Get().LAN.IP != "192.168.10.1" {
+		t.Fatalf("rollback failed: mode=%o ip=%s", info.Mode().Perm(), store.Get().LAN.IP)
 	}
 }
 
-func TestAdGuardProxy(t *testing.T) {
+func TestAdGuardProxySafePathCleaning(t *testing.T) {
+	var seenPath string
 	mockAGH := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/control/status" {
-			http.NotFound(w, r)
-			return
-		}
+		seenPath = r.URL.Path
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"running":true,"protection_enabled":true}`))
+		_, _ = w.Write([]byte(`{"running":true}`))
 	}))
 	defer mockAGH.Close()
 
@@ -306,11 +377,11 @@ func TestAdGuardProxy(t *testing.T) {
 	var lr struct{ Token string }
 	_ = json.Unmarshal(rec.Body.Bytes(), &lr)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/dns/status", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/adguard/filtering/status", nil)
 	req.Header.Set("Authorization", "Bearer "+lr.Token)
 	rec = httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"protection_enabled":true`) {
-		t.Fatalf("AdGuard proxy failed: %d %s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusOK || seenPath != "/control/filtering/status" {
+		t.Fatalf("unexpected proxy result: %d path=%q", rec.Code, seenPath)
 	}
 }

@@ -105,6 +105,15 @@ func (s *Server) handleSetSQM(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "overhead must be between 0 and 128")
 		return
 	}
+
+	// Tear down qdiscs on the previous interface BEFORE writing new WAN_IF so CAKE is never orphaned
+	if prevBytes, err := os.ReadFile(sqmConfPath); err == nil {
+		prev := ParseSQMConf(string(prevBytes))
+		if prev.WANInterface != "" && prev.WANInterface != req.WANInterface {
+			_, _ = sys.Run(5*time.Second, "/usr/sbin/netbee-sqm", "stop")
+		}
+	}
+
 	if err := config.AtomicWriteFile(sqmConfPath, []byte(RenderSQMConf(req)), 0644); err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
@@ -138,7 +147,7 @@ func (s *Server) handleGetVnStat(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeRawJSON(w, http.StatusOK, []byte(res.Stdout))
+	writeValidatedRawJSON(w, http.StatusOK, []byte(res.Stdout), "{}")
 }
 
 func (s *Server) handleVnStatIface(w http.ResponseWriter, r *http.Request) {

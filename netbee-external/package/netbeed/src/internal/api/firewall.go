@@ -101,13 +101,16 @@ func RenderCustomNFT(fw config.FirewallState, lanIP string) string {
 				parts = append(parts, fmt.Sprintf("ip daddr %s", rule.DstAddr))
 			}
 		}
-		if rule.Protocol == "tcp" || rule.Protocol == "udp" {
+		switch rule.Protocol {
+		case "tcp", "udp":
 			if rule.DstPort != "" {
 				parts = append(parts, fmt.Sprintf("%s dport %s", rule.Protocol, rule.DstPort))
 			} else {
 				parts = append(parts, fmt.Sprintf("meta l4proto %s", rule.Protocol))
 			}
-		} else if rule.Protocol == "icmp" {
+		case "icmpv6":
+			parts = append(parts, "ip6 nexthdr icmpv6")
+		case "icmp":
 			if v6 {
 				parts = append(parts, "ip6 nexthdr icmpv6")
 			} else {
@@ -131,11 +134,14 @@ func validateFirewallRule(r config.FirewallRule) error {
 	if r.Chain != "input" && r.Chain != "forward" {
 		return fmt.Errorf("chain must be input or forward")
 	}
+	if r.Chain == "input" && r.OutIface != "" {
+		return fmt.Errorf("out_iface is only valid on forward chain")
+	}
 	if r.Action != "accept" && r.Action != "drop" && r.Action != "reject" {
 		return fmt.Errorf("action must be accept, drop, or reject")
 	}
-	if r.Protocol != "tcp" && r.Protocol != "udp" && r.Protocol != "icmp" && r.Protocol != "any" {
-		return fmt.Errorf("protocol must be tcp, udp, icmp, or any")
+	if r.Protocol != "tcp" && r.Protocol != "udp" && r.Protocol != "icmp" && r.Protocol != "icmpv6" && r.Protocol != "any" {
+		return fmt.Errorf("protocol must be tcp, udp, icmp, icmpv6, or any")
 	}
 	if r.InIface != "" && !sys.ValidIface(r.InIface) {
 		return fmt.Errorf("invalid in_iface")
@@ -152,8 +158,16 @@ func validateFirewallRule(r config.FirewallRule) error {
 	if r.SrcAddr != "" && r.DstAddr != "" && isIPv6Addr(r.SrcAddr) != isIPv6Addr(r.DstAddr) {
 		return fmt.Errorf("src_addr and dst_addr must use the same IP family")
 	}
-	if r.DstPort != "" && !sys.ValidPortSpec(r.DstPort) {
-		return fmt.Errorf("invalid dst_port")
+	if r.Protocol == "icmpv6" && ((r.SrcAddr != "" && !isIPv6Addr(r.SrcAddr)) || (r.DstAddr != "" && !isIPv6Addr(r.DstAddr))) {
+		return fmt.Errorf("icmpv6 protocol cannot be combined with IPv4 addresses")
+	}
+	if r.DstPort != "" {
+		if r.Protocol != "tcp" && r.Protocol != "udp" {
+			return fmt.Errorf("dst_port requires protocol tcp or udp")
+		}
+		if !sys.ValidPortSpec(r.DstPort) {
+			return fmt.Errorf("invalid dst_port")
+		}
 	}
 	return nil
 }
@@ -173,6 +187,9 @@ func validatePortForward(pf config.PortForward) error {
 	}
 	if pf.IntPort != 0 && !sys.ValidPort(pf.IntPort) {
 		return fmt.Errorf("invalid int_port (use 0 to preserve external port/range, or 1..65535)")
+	}
+	if strings.Contains(pf.ExtPort, "-") && pf.IntPort != 0 {
+		return fmt.Errorf("int_port must be 0 when ext_port is a port range")
 	}
 	if pf.SourceCIDR != "" && (!sys.ValidIPOrCIDR(pf.SourceCIDR) || isIPv6Addr(pf.SourceCIDR)) {
 		return fmt.Errorf("invalid source_cidr (IPv4 CIDR required)")
@@ -224,24 +241,25 @@ func (s *Server) mutateAndApplyFirewall(reason string, mutate func(*config.Firew
 	return nil
 }
 
+func isFlowOffloadActive() bool {
+	_, err := sys.Run(2*time.Second, "nft", "list", "flowtable", "inet", "netbee_fw", "fastpath")
+	return err == nil
+}
+
 func (s *Server) handleFirewallRuleset(w http.ResponseWriter, r *http.Request) {
 	res, err := sys.Run(5*time.Second, "nft", "-j", "list", "ruleset")
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeRawJSON(w, http.StatusOK, []byte(res.Stdout))
+	writeValidatedRawJSON(w, http.StatusOK, []byte(res.Stdout), "{}")
 }
 
 func (s *Server) handleGetFirewallConfig(w http.ResponseWriter, r *http.Request) {
 	fw := s.Store.Get().Firewall
-	offloadActive := false
-	if _, err := sys.Run(2*time.Second, "nft", "list", "flowtable", "inet", "netbee_fw", "fastpath"); err == nil {
-		offloadActive = true
-	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"config":         fw,
-		"offload_active": offloadActive,
+		"offload_active": isFlowOffloadActive(),
 	})
 }
 
@@ -461,10 +479,13 @@ func (s *Server) handleSetFlowOffload(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid json body")
 		return
 	}
-	_ = s.Store.Update(func(st *config.State) error {
+	if err := s.Store.Update(func(st *config.State) error {
 		st.Firewall.FlowOffload = req.Enabled
 		return nil
-	})
+	}); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	act := "stop"
 	if req.Enabled {
 		act = "start"
@@ -474,7 +495,11 @@ func (s *Server) handleSetFlowOffload(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "output": strings.TrimSpace(res.Stdout)})
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok":             true,
+		"offload_active": isFlowOffloadActive(),
+		"output":         strings.TrimSpace(res.Stdout),
+	})
 }
 
 func (s *Server) handleReloadFirewall(w http.ResponseWriter, r *http.Request) {

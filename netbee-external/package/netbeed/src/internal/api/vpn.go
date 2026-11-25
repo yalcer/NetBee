@@ -2,6 +2,7 @@ package api
 
 import (
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"strconv"
@@ -47,7 +48,11 @@ func applyWireGuard(wg config.WireGuardState) error {
 	}
 	_, _ = sys.Run(3*time.Second, "modprobe", "wireguard")
 	_, _ = sys.Run(3*time.Second, "ip", "link", "add", iface, "type", "wireguard")
-	_, _ = sys.Run(3*time.Second, "ip", "address", "replace", wg.Address, "dev", iface)
+	// Flush existing addresses first so changing wg.Address does not accumulate stale secondary tunnel IPs
+	_, _ = sys.Run(3*time.Second, "ip", "address", "flush", "dev", iface)
+	if _, err := sys.Run(3*time.Second, "ip", "address", "add", wg.Address, "dev", iface); err != nil {
+		return err
+	}
 	if _, err := sys.Run(5*time.Second, "wg", "setconf", iface, wgConfPath); err != nil {
 		return err
 	}
@@ -104,6 +109,27 @@ func (s *Server) handleGetWireGuard(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func normalizePeerAllowedIPs(raw string) (string, net.IP, error) {
+	raw = strings.TrimSpace(raw)
+	if ip := net.ParseIP(raw); ip != nil {
+		if ip.To4() != nil {
+			return ip.String() + "/32", ip, nil
+		}
+		return ip.String() + "/128", ip, nil
+	}
+	ip, ipNet, err := net.ParseCIDR(raw)
+	if err != nil {
+		return "", nil, err
+	}
+	ones, bits := ipNet.Mask.Size()
+	return fmt.Sprintf("%s/%d", ip.String(), ones), ip, func() error {
+		if bits == 0 {
+			return fmt.Errorf("invalid prefix")
+		}
+		return nil
+	}()
+}
+
 func (s *Server) handleSetWireGuard(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Enabled    bool   `json:"enabled"`
@@ -119,8 +145,14 @@ func (s *Server) handleSetWireGuard(w http.ResponseWriter, r *http.Request) {
 	if req.Address == "" {
 		req.Address = "10.66.66.1/24"
 	}
-	if !sys.ValidIPOrCIDR(req.Address) {
-		writeErr(w, http.StatusBadRequest, "invalid WireGuard CIDR address")
+	srvIP, srvNet, err := net.ParseCIDR(req.Address)
+	if err != nil || srvIP == nil || srvNet == nil {
+		writeErr(w, http.StatusBadRequest, "invalid WireGuard CIDR address (expected e.g. 10.66.66.1/24)")
+		return
+	}
+	ones, bits := srvNet.Mask.Size()
+	if (srvIP.To4() != nil && ones >= 32) || (srvIP.To4() == nil && ones >= bits) {
+		writeErr(w, http.StatusBadRequest, "WireGuard interface address must include a subnet prefix (e.g. /24, not /32)")
 		return
 	}
 	if req.ListenPort == 0 {
@@ -130,15 +162,29 @@ func (s *Server) handleSetWireGuard(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid listen_port")
 		return
 	}
-	if req.Endpoint != "" && !sys.ValidHost(req.Endpoint) {
-		writeErr(w, http.StatusBadRequest, "invalid endpoint host")
-		return
+	req.Endpoint = strings.TrimSpace(req.Endpoint)
+	if req.Endpoint != "" {
+		// Strip accidental :port if user included it in Endpoint host field
+		if h, _, splitErr := net.SplitHostPort(req.Endpoint); splitErr == nil && net.ParseIP(req.Endpoint) == nil {
+			req.Endpoint = h
+		}
+		if !sys.ValidHost(req.Endpoint) {
+			writeErr(w, http.StatusBadRequest, "invalid endpoint host or IP")
+			return
+		}
 	}
 	if req.DNS == "" {
 		req.DNS = s.Store.Get().LAN.IP
 	}
+	if !sys.ValidIPList(req.DNS) {
+		writeErr(w, http.StatusBadRequest, "invalid DNS address list (expected comma-separated IPs)")
+		return
+	}
 
 	var next config.WireGuardState
+	var syncFW bool
+	var fwState config.FirewallState
+	var lanIP string
 	if err := s.Store.Update(func(st *config.State) error {
 		wg := st.WireGuard
 		if wg.Interface == "" {
@@ -163,6 +209,12 @@ func (s *Server) handleSetWireGuard(w http.ResponseWriter, r *http.Request) {
 		wg.Endpoint = req.Endpoint
 		wg.DNS = req.DNS
 		st.WireGuard = wg
+		if st.Firewall.WireGuardPort != req.ListenPort {
+			st.Firewall.WireGuardPort = req.ListenPort
+			syncFW = st.Firewall.ExposeWireGuard
+			fwState = st.Firewall
+			lanIP = st.LAN.IP
+		}
 		next = wg
 		return nil
 	}); err != nil {
@@ -174,8 +226,28 @@ func (s *Server) handleSetWireGuard(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	if syncFW {
+		_ = config.AtomicWriteFile(uiNftDropInPath, []byte(RenderCustomNFT(fwState, lanIP)), 0644)
+		_, _ = sys.Run(10*time.Second, "/etc/init.d/S35nftables", "reload")
+	}
 	next.PrivateKey = ""
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "config": next})
+}
+
+func BuildWGClientConfig(clientPriv, peerAllowedIPs string, wg config.WireGuardState) string {
+	endpointHost := wg.Endpoint
+	endpointStr := "<YOUR_PUBLIC_IP_OR_DDNS>:" + strconv.Itoa(wg.ListenPort)
+	if endpointHost != "" {
+		endpointStr = net.JoinHostPort(endpointHost, strconv.Itoa(wg.ListenPort))
+	}
+	dns := wg.DNS
+	if !sys.ValidIPList(dns) {
+		dns = "192.168.10.1"
+	}
+	return fmt.Sprintf(
+		"[Interface]\nPrivateKey = %s\nAddress = %s\nDNS = %s\n\n[Peer]\nPublicKey = %s\nEndpoint = %s\nAllowedIPs = 0.0.0.0/0, ::/0\nPersistentKeepalive = 25\n",
+		clientPriv, peerAllowedIPs, dns, wg.PublicKey, endpointStr,
+	)
 }
 
 func (s *Server) handleAddWireGuardPeer(w http.ResponseWriter, r *http.Request) {
@@ -192,7 +264,8 @@ func (s *Server) handleAddWireGuardPeer(w http.ResponseWriter, r *http.Request) 
 		writeErr(w, http.StatusBadRequest, "invalid peer name")
 		return
 	}
-	if !sys.ValidIPOrCIDR(req.AllowedIPs) {
+	normalizedAllowed, peerIP, err := normalizePeerAllowedIPs(req.AllowedIPs)
+	if err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid allowed_ips (expected e.g. 10.66.66.2/32)")
 		return
 	}
@@ -221,12 +294,15 @@ func (s *Server) handleAddWireGuardPeer(w http.ResponseWriter, r *http.Request) 
 		ID:         fmt.Sprintf("peer%d", time.Now().UnixMilli()),
 		Name:       req.Name,
 		PublicKey:  clientPub,
-		AllowedIPs: req.AllowedIPs,
+		AllowedIPs: normalizedAllowed,
 		Enabled:    true,
 	}
 
 	var wg config.WireGuardState
 	if err := s.Store.Update(func(st *config.State) error {
+		if srvIP, _, parseErr := net.ParseCIDR(st.WireGuard.Address); parseErr == nil && srvIP.Equal(peerIP) {
+			return fmt.Errorf("conflict: peer allowed_ips cannot match server tunnel IP (%s)", srvIP.String())
+		}
 		// Ensure server keypair exists so client_config always has a valid server PublicKey
 		if st.WireGuard.PrivateKey == "" {
 			privRes, err := sys.Run(3*time.Second, "wg", "genkey")
@@ -241,6 +317,9 @@ func (s *Server) handleAddWireGuardPeer(w http.ResponseWriter, r *http.Request) 
 			st.WireGuard.PrivateKey = priv
 			st.WireGuard.PublicKey = strings.TrimSpace(pubRes.Stdout)
 		}
+		if peer.PublicKey == st.WireGuard.PublicKey {
+			return fmt.Errorf("conflict: peer public_key cannot equal server public_key")
+		}
 		for _, existing := range st.WireGuard.Peers {
 			if existing.PublicKey == peer.PublicKey {
 				return fmt.Errorf("duplicate peer public_key")
@@ -254,7 +333,7 @@ func (s *Server) handleAddWireGuardPeer(w http.ResponseWriter, r *http.Request) 
 		return nil
 	}); err != nil {
 		status := http.StatusInternalServerError
-		if strings.Contains(err.Error(), "duplicate") {
+		if strings.Contains(err.Error(), "duplicate") || strings.Contains(err.Error(), "conflict") {
 			status = http.StatusConflict
 		}
 		writeErr(w, status, err.Error())
@@ -267,17 +346,9 @@ func (s *Server) handleAddWireGuardPeer(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 
-	// Build ready-to-import WireGuard client config (ideal for QR code rendering in frontend)
 	clientConf := ""
 	if clientPriv != "" {
-		endpoint := wg.Endpoint
-		if endpoint == "" {
-			endpoint = "<YOUR_PUBLIC_IP_OR_DDNS>"
-		}
-		clientConf = fmt.Sprintf(
-			"[Interface]\nPrivateKey = %s\nAddress = %s\nDNS = %s\n\n[Peer]\nPublicKey = %s\nEndpoint = %s:%d\nAllowedIPs = 0.0.0.0/0, ::/0\nPersistentKeepalive = 25\n",
-			clientPriv, peer.AllowedIPs, wg.DNS, wg.PublicKey, endpoint, wg.ListenPort,
-		)
+		clientConf = BuildWGClientConfig(clientPriv, peer.AllowedIPs, wg)
 	}
 
 	writeJSON(w, http.StatusCreated, map[string]any{
@@ -291,7 +362,7 @@ func (s *Server) handleDelWireGuardPeer(w http.ResponseWriter, r *http.Request) 
 	id := r.PathValue("id")
 	found := false
 	var wg config.WireGuardState
-	_ = s.Store.Update(func(st *config.State) error {
+	if err := s.Store.Update(func(st *config.State) error {
 		next := make([]config.WireGuardPeer, 0, len(st.WireGuard.Peers))
 		for _, p := range st.WireGuard.Peers {
 			if p.ID == id {
@@ -300,17 +371,25 @@ func (s *Server) handleDelWireGuardPeer(w http.ResponseWriter, r *http.Request) 
 			}
 			next = append(next, p)
 		}
+		if !found {
+			return fmt.Errorf("peer not found")
+		}
 		st.WireGuard.Peers = next
 		wg = st.WireGuard
 		return nil
-	})
-	if !found {
-		writeErr(w, http.StatusNotFound, "peer not found")
+	}); err != nil {
+		if !found {
+			writeErr(w, http.StatusNotFound, "peer not found")
+			return
+		}
+		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	if wg.Enabled {
-		_ = applyWireGuard(wg)
+		if err := applyWireGuard(wg); err != nil {
+			writeErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
-
