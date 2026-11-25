@@ -18,7 +18,7 @@ echo "--- Default Route ---"
 ip route show default
 echo ""
 echo "--- Services ---"
-for svc in AdGuardHome dropbear chronyd vnstatd radvd watchdog pppd; do
+for svc in netbeed AdGuardHome dropbear chronyd vnstatd radvd watchdog pppd; do
     if pidof "$svc" >/dev/null 2>&1; then
         echo "  [UP]   $svc"
     else

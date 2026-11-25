@@ -1,3 +1,4 @@
 menu "NetBee OS Packages"
 source "$BR2_EXTERNAL_NETBEE_PATH/package/adguardhome/Config.in"
+source "$BR2_EXTERNAL_NETBEE_PATH/package/netbeed/Config.in"
 endmenu
