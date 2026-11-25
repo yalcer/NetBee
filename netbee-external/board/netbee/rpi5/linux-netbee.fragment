@@ -81,22 +81,22 @@ CONFIG_IFB=y
 # --- Raspberry Pi 5 Hardware (Active Cooler Fan) ---
 CONFIG_SENSORS_PWM_FAN=y
 
-# --- USB-Ethernet Adapters (Realtek, ASIX, CDC, SMSC) ---
+# --- USB-Ethernet Adapters (modules so built-in RPi5 RP1 macb always probes first as eth0) ---
 CONFIG_USB_NET_DRIVERS=y
-CONFIG_USB_RTL8150=y
-CONFIG_USB_RTL8152=y
-CONFIG_USB_NET_AX8817X=y
-CONFIG_USB_NET_AX88179_178A=y
-CONFIG_USB_NET_CDCETHER=y
-CONFIG_USB_NET_CDC_NCM=y
-CONFIG_USB_NET_RNDIS_HOST=y
-CONFIG_USB_NET_SMSC95XX=y
+CONFIG_USB_RTL8150=m
+CONFIG_USB_RTL8152=m
+CONFIG_USB_NET_AX8817X=m
+CONFIG_USB_NET_AX88179_178A=m
+CONFIG_USB_NET_CDCETHER=m
+CONFIG_USB_NET_CDC_NCM=m
+CONFIG_USB_NET_RNDIS_HOST=m
+CONFIG_USB_NET_SMSC95XX=m
 
-# --- PCIe Ethernet NICs (via Raspberry Pi 5 PCIe HAT) ---
-CONFIG_R8169=y
-CONFIG_IGC=y
-CONFIG_IGB=y
-CONFIG_E1000E=y
+# --- PCIe Ethernet NICs (modules via Raspberry Pi 5 PCIe HAT so macb stays eth0) ---
+CONFIG_R8169=m
+CONFIG_IGC=m
+CONFIG_IGB=m
+CONFIG_E1000E=m
 
 # --- Disable Unnecessary Subsystems (Router/Firewall Hardening) ---
 # CONFIG_SOUND is not set

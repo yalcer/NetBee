@@ -32,6 +32,11 @@ start_sqm() {
 
 	stop_sqm
 
+	# Disable nftables software flow offload so packets are not bypassed past CAKE qdiscs
+	if /usr/sbin/nft list flowtable inet netbee_fw fastpath >/dev/null 2>&1; then
+		/etc/init.d/S42nft-offload stop >/dev/null 2>&1 || true
+	fi
+
 	# Egress (Upload) shaping with CAKE
 	tc qdisc replace dev "$WAN_IF" root cake \
 		bandwidth "${UPLOAD_KBIT}kbit" diffserv4 dual-srchost nat wash overhead "$OVERHEAD"

@@ -1,5 +1,7 @@
-# NetBee OS - IPv6 Router Advertisement (SLAAC) on LAN
-# Automatically advertises any global /64 prefix delegated onto eth0 via dhcpcd.
+# NetBee OS - IPv6 Router Advertisement (SLAAC) Example for LAN
+# Disabled by default to avoid IPv6 blackholing on IPv4-only ISPs.
+# To enable after configuring IPv6 Prefix Delegation (ia_pd) in /etc/dhcpcd.conf:
+#   cp /etc/radvd.conf.example /etc/radvd.conf && /etc/init.d/S50radvd start
 
 interface eth0
 {

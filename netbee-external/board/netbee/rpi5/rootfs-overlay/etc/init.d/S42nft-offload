@@ -1,8 +1,18 @@
 #!/bin/sh
-# NetBee OS - Enable nftables software flow offload when both eth0 and eth1 exist
+# NetBee OS - Enable nftables software flow offload when eth0+eth1 exist and SQM is disabled
+
+SQM_CONF="/etc/netbee/sqm.conf"
 
 start() {
 	printf "Enabling nftables flow offload: "
+	if [ -r "$SQM_CONF" ]; then
+		ENABLED=0
+		. "$SQM_CONF"
+		if [ "$ENABLED" = "1" ]; then
+			echo "SKIP (SQM/CAKE active)"
+			return 0
+		fi
+	fi
 	if [ ! -d /sys/class/net/eth0 ] || [ ! -d /sys/class/net/eth1 ]; then
 		echo "SKIP (waiting for eth0+eth1)"
 		return 0
@@ -25,7 +35,7 @@ EOF
 }
 
 stop() {
-	printf "Reloading nftables without flow offload: "
+	printf "Disabling nftables flow offload: "
 	/etc/init.d/S35nftables reload >/dev/null 2>&1 && echo "OK" || echo "FAIL"
 }
 
