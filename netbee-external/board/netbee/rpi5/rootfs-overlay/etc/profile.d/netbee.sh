@@ -1,7 +1,8 @@
 # NetBee OS - Interactive Login Helper & First-Boot Security Reminder
 case "$-" in
 	*i*)
-		echo "NetBee OS | Commands: netbee-status, netbee-sqm | AdGuardHome: http://192.168.10.1:3000"
+		echo "NetBee OS | Commands: netbee-status, netbee-sqm, netbee-backup"
+		echo "AdGuardHome: http://192.168.10.1:3000 (default: admin / netbee)"
 		if [ "$(id -u)" -eq 0 ] && [ -r /etc/shadow ]; then
 			_lastchg=$(awk -F: '$1=="root"{print $3}' /etc/shadow 2>/dev/null)
 			if [ -z "$_lastchg" ]; then

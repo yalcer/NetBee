@@ -1,0 +1,61 @@
+#!/bin/sh
+# NetBee OS - Configuration Backup & Restore Utility
+
+set -eu
+
+PATHS="
+etc/hostname
+etc/hosts
+etc/network/interfaces
+etc/nftables.conf
+etc/dhcpcd.conf
+etc/chrony.conf
+etc/radvd.conf
+etc/ppp
+etc/netbee
+etc/wireguard
+etc/adguardhome/AdGuardHome.yaml
+etc/dropbear
+etc/default/dropbear
+etc/cron/crontabs/root
+"
+
+usage() {
+	echo "Usage:"
+	echo "  $0 create [output.tar.gz]   - Archive persistent NetBee configs"
+	echo "  $0 restore <backup.tar.gz>  - Restore configs from archive (reboot recommended)"
+	exit 1
+}
+
+cmd="${1:-}"
+case "$cmd" in
+	create)
+		OUT="${2:-/tmp/netbee-backup-$(date +%Y%m%d-%H%M%S).tar.gz}"
+		EXISTING=""
+		for p in $PATHS; do
+			[ -e "/$p" ] && EXISTING="$EXISTING $p"
+		done
+		if [ -z "$EXISTING" ]; then
+			echo "Error: No configuration files found to back up." >&2
+			exit 1
+		fi
+		# shellcheck disable=SC2086
+		tar -czf "$OUT" -C / $EXISTING
+		chmod 0600 "$OUT"
+		echo "Backup created: $OUT"
+		;;
+	restore)
+		IN="${2:-}"
+		if [ -z "$IN" ] || [ ! -f "$IN" ]; then
+			echo "Error: Backup archive not found: ${IN:-<missing>}" >&2
+			exit 1
+		fi
+		tar -xzf "$IN" -C /
+		chmod 0600 /etc/ppp/pap-secrets /etc/ppp/chap-secrets /etc/cron/crontabs/root 2>/dev/null || true
+		echo "Backup restored from: $IN"
+		echo "Reboot ('reboot') or restart affected services to apply all changes."
+		;;
+	*)
+		usage
+		;;
+esac

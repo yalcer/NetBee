@@ -28,8 +28,8 @@ Minimal, hardened Buildroot-based firewall and router OS for **Raspberry Pi 5** 
 | **WAN (`eth1`)** | DHCP / IPv6-PD via `dhcpcd` (USB or PCIe NIC; PPPoE / ONT VLAN 35 ready) |
 | **DHCP Pool** | `192.168.10.100` – `192.168.10.200` (`AdGuardHome`) |
 | **SSH (`dropbear`)** | `ssh root@192.168.10.1` (default password: `netbee` — change immediately with `passwd`) |
-| **AdGuardHome UI** | `http://192.168.10.1:3000` (LAN only) |
-| **CLI Utilities** | `netbee-status`, `netbee-sqm {start\|stop\|restart\|status}` |
+| **AdGuardHome UI** | `http://192.168.10.1:3000` (LAN only; default: `admin` / `netbee`) |
+| **CLI Utilities** | `netbee-status`, `netbee-sqm`, `netbee-backup` |
 
 ---
 
@@ -106,3 +106,4 @@ NetBee/
 | `make savedefconfig` | Save changes back to `netbee_rpi5_defconfig` |
 | `make qemu` | Boot built image in QEMU ARM64 |
 | `make distclean` | Remove `output/` for a clean rebuild |
+

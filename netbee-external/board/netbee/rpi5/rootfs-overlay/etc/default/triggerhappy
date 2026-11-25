@@ -1,0 +1,6 @@
+# Run as root so Raspberry Pi 5 physical power button (KEY_POWER) can run /sbin/poweroff
+if ls /dev/input/event* >/dev/null 2>&1; then
+	DAEMON_ARGS="--daemon --triggers /etc/triggerhappy/triggers.d --socket /var/run/thd.socket --pidfile $PIDFILE --user root /dev/input/event*"
+else
+	DAEMON_ARGS="--daemon --triggers /etc/triggerhappy/triggers.d --socket /var/run/thd.socket --pidfile $PIDFILE --user root"
+fi
