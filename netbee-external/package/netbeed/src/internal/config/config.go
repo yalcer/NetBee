@@ -24,8 +24,8 @@ type RuntimeConfig struct {
 
 func DefaultRuntimeConfig() RuntimeConfig {
 	return RuntimeConfig{
-		HTTPSAddr:       "192.168.10.1:443",
-		HTTPAddr:        "192.168.10.1:80",
+		HTTPSAddr:       ":443",
+		HTTPAddr:        ":80",
 		TLSDIR:          "/etc/netbee/tls",
 		WebDir:          "/usr/share/netbee/web",
 		StatePath:       "/etc/netbee/state.json",
@@ -215,8 +215,42 @@ func (s *Store) Update(fn func(*State) error) error {
 	if err := fn(&next); err != nil {
 		return err
 	}
+	if next.Firewall.CustomRules == nil {
+		next.Firewall.CustomRules = []FirewallRule{}
+	}
+	if next.Firewall.PortForwards == nil {
+		next.Firewall.PortForwards = []PortForward{}
+	}
+	if next.WireGuard.Peers == nil {
+		next.WireGuard.Peers = []WireGuardPeer{}
+	}
 	if err := AtomicWriteJSON(s.path, next, 0600); err != nil {
 		return err
+	}
+	s.state = next
+	return nil
+}
+
+// Reload re-reads persistent state from disk (essential after a rollback reverts state.json).
+func (s *Store) Reload() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	next := DefaultState()
+	if data, err := os.ReadFile(s.path); err == nil {
+		if err := json.Unmarshal(data, &next); err != nil {
+			return err
+		}
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	if next.Firewall.CustomRules == nil {
+		next.Firewall.CustomRules = []FirewallRule{}
+	}
+	if next.Firewall.PortForwards == nil {
+		next.Firewall.PortForwards = []PortForward{}
+	}
+	if next.WireGuard.Peers == nil {
+		next.WireGuard.Peers = []WireGuardPeer{}
 	}
 	s.state = next
 	return nil
@@ -257,3 +291,4 @@ func AtomicWriteJSON(path string, v any, perm os.FileMode) error {
 	b = append(b, '\n')
 	return AtomicWriteFile(path, b, perm)
 }
+

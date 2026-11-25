@@ -239,9 +239,13 @@ func (s *Server) handleSetWAN(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	cur := s.Store.Get()
+	if req.PPPoEPassword == "" {
+		req.PPPoEPassword = cur.WAN.PPPoEPassword
+	}
 	if req.Mode == "pppoe" || req.Mode == "ont_vlan" {
-		if req.PPPoEUser == "" || !sys.ValidSafeString(req.PPPoEUser) || !sys.ValidSafeString(req.PPPoEPassword) {
-			writeErr(w, http.StatusBadRequest, "invalid PPPoE username or password")
+		if req.PPPoEUser == "" || req.PPPoEPassword == "" || !sys.ValidSafeString(req.PPPoEUser) || !sys.ValidSafeString(req.PPPoEPassword) {
+			writeErr(w, http.StatusBadRequest, "PPPoE username and password are required and must be valid")
 			return
 		}
 	}
@@ -253,31 +257,42 @@ func (s *Server) handleSetWAN(w http.ResponseWriter, r *http.Request) {
 		req.MTU = 1492
 	}
 
-	cur := s.Store.Get()
-	if req.PPPoEPassword == "" {
-		req.PPPoEPassword = cur.WAN.PPPoEPassword
-	}
-
+	oldWAN := cur.WAN
 	files := []string{"/etc/network/interfaces", "/etc/dhcpcd.conf", "/etc/ppp/peers/wan-pppoe", "/etc/ppp/pap-secrets", s.Cfg.StatePath}
 	s.Rollback.Begin("WAN configuration update", time.Duration(s.Cfg.RollbackSeconds)*time.Second, files, func() {
+		_ = s.Store.Reload()
+		_, _ = sys.Run(5*time.Second, "killall", "pppd")
 		_, _ = sys.Run(10*time.Second, "/etc/init.d/S40network", "restart")
 		_, _ = sys.Run(10*time.Second, "/etc/init.d/S41dhcpcd", "restart")
 	})
+
+	// Clean up previous WAN VLAN / PPPoE state BEFORE writing new interfaces file
+	_, _ = sys.Run(5*time.Second, "killall", "pppd")
+	if oldWAN.Mode == "ont_vlan" && oldWAN.VLANID > 0 {
+		oldIf := oldWAN.Interface
+		if oldIf == "" {
+			oldIf = "eth1"
+		}
+		_, _ = sys.Run(3*time.Second, "ip", "link", "del", fmt.Sprintf("%s.%d", oldIf, oldWAN.VLANID))
+	}
 
 	if err := s.Store.Update(func(st *config.State) error {
 		st.WAN = req
 		return nil
 	}); err != nil {
+		s.Rollback.RevertNow()
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
 	lan := s.Store.Get().LAN
 	if err := config.AtomicWriteFile("/etc/network/interfaces", []byte(RenderInterfacesFile(lan, req)), 0644); err != nil {
+		s.Rollback.RevertNow()
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	if err := config.AtomicWriteFile("/etc/dhcpcd.conf", []byte(RenderDHCPCDConf(lan, req)), 0644); err != nil {
+		s.Rollback.RevertNow()
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -287,8 +302,6 @@ func (s *Server) handleSetWAN(w http.ResponseWriter, r *http.Request) {
 		_ = config.AtomicWriteFile("/etc/ppp/pap-secrets", []byte(secret), 0600)
 	}
 
-	// Re-apply WAN networking cleanly
-	_, _ = sys.Run(5*time.Second, "killall", "pppd")
 	_, _ = sys.Run(10*time.Second, "/etc/init.d/S40network", "restart")
 	_, _ = sys.Run(10*time.Second, "/etc/init.d/S41dhcpcd", "restart")
 
@@ -335,27 +348,37 @@ func (s *Server) handleSetLAN(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	files := []string{"/etc/network/interfaces", s.Cfg.StatePath}
+	files := []string{"/etc/network/interfaces", "/etc/default/dropbear", "/etc/hosts", uiNftDropInPath, s.Cfg.StatePath}
 	s.Rollback.Begin("LAN IP change", time.Duration(s.Cfg.RollbackSeconds)*time.Second, files, func() {
+		_ = s.Store.Reload()
 		_, _ = sys.Run(10*time.Second, "/etc/init.d/S40network", "restart")
+		_, _ = sys.Run(5*time.Second, "/etc/init.d/S50dropbear", "restart")
+		_, _ = sys.Run(10*time.Second, "/etc/init.d/S35nftables", "reload")
 	})
 
 	if err := s.Store.Update(func(st *config.State) error {
 		st.LAN = req
 		return nil
 	}); err != nil {
+		s.Rollback.RevertNow()
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	wan := s.Store.Get().WAN
-	if err := config.AtomicWriteFile("/etc/network/interfaces", []byte(RenderInterfacesFile(req, wan)), 0644); err != nil {
+	st := s.Store.Get()
+	if err := config.AtomicWriteFile("/etc/network/interfaces", []byte(RenderInterfacesFile(req, st.WAN)), 0644); err != nil {
+		s.Rollback.RevertNow()
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	// Keep Dropbear SSH binding, /etc/hosts, and TransparentDNS redirect in sync with new LAN IP
+	_ = config.AtomicWriteFile("/etc/default/dropbear", []byte(fmt.Sprintf("# Managed by NetBee OS (netbeed)\nDROPBEAR_ARGS=\"-p %s:22 -I 600\"\n", req.IP)), 0644)
+	_ = config.AtomicWriteFile("/etc/hosts", []byte(fmt.Sprintf("127.0.0.1       localhost\n%s    netbee.lan netbee\n::1             localhost ip6-localhost ip6-loopback\n", req.IP)), 0644)
+	_ = config.AtomicWriteFile(uiNftDropInPath, []byte(RenderCustomNFT(st.Firewall, req.IP)), 0644)
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok":             true,
 		"pending_commit": s.Rollback.Status(),
-		"message":        "LAN config updated; restart network or reboot to apply IP change.",
+		"message":        "LAN config, SSH bind, and hosts updated; restart network or reboot to apply new LAN IP.",
 	})
 }
+

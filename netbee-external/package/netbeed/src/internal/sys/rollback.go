@@ -13,21 +13,40 @@ type PendingCommit struct {
 	RemainingSec int       `json:"remaining_seconds"`
 }
 
+type fileSnapshot struct {
+	exists bool
+	data   []byte
+	mode   os.FileMode
+}
+
 type RollbackManager struct {
 	mu      sync.Mutex
 	active  bool
 	reason  string
 	expires time.Time
 	timer   *time.Timer
-	backups map[string][]byte // path -> original bytes (nil means did not exist)
-	onRev   func()
+	backups map[string]fileSnapshot
+	onRevs  []func()
 }
 
 func NewRollbackManager() *RollbackManager {
 	return &RollbackManager{}
 }
 
-// Begin snapshots the listed files and schedules automatic rollback if Confirm() is not called within timeout.
+func snapshotFile(path string) fileSnapshot {
+	info, err := os.Stat(path)
+	if err != nil {
+		return fileSnapshot{exists: false}
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return fileSnapshot{exists: false}
+	}
+	return fileSnapshot{exists: true, data: data, mode: info.Mode().Perm()}
+}
+
+// Begin snapshots the listed files (including exact permissions) BEFORE they are modified
+// and schedules automatic rollback if Confirm() is not called within timeout.
 func (rm *RollbackManager) Begin(reason string, timeout time.Duration, files []string, onRevert func()) {
 	rm.mu.Lock()
 	defer rm.mu.Unlock()
@@ -35,32 +54,25 @@ func (rm *RollbackManager) Begin(reason string, timeout time.Duration, files []s
 	if rm.timer != nil {
 		rm.timer.Stop()
 	}
-	// If no previous uncommitted snapshot is active, snapshot current working files
 	if !rm.active {
-		rm.backups = make(map[string][]byte, len(files))
+		rm.backups = make(map[string]fileSnapshot, len(files))
+		rm.onRevs = nil
 		for _, f := range files {
-			if data, err := os.ReadFile(f); err == nil {
-				rm.backups[f] = data
-			} else {
-				rm.backups[f] = nil
-			}
+			rm.backups[f] = snapshotFile(f)
 		}
 	} else {
-		// Merge any additional files not yet snapshotted
 		for _, f := range files {
 			if _, ok := rm.backups[f]; !ok {
-				if data, err := os.ReadFile(f); err == nil {
-					rm.backups[f] = data
-				} else {
-					rm.backups[f] = nil
-				}
+				rm.backups[f] = snapshotFile(f)
 			}
 		}
+	}
+	if onRevert != nil {
+		rm.onRevs = append(rm.onRevs, onRevert)
 	}
 	rm.active = true
 	rm.reason = reason
 	rm.expires = time.Now().Add(timeout)
-	rm.onRev = onRevert
 	rm.timer = time.AfterFunc(timeout, func() {
 		rm.RevertNow()
 	})
@@ -96,7 +108,7 @@ func (rm *RollbackManager) Confirm() bool {
 	}
 	rm.active = false
 	rm.backups = nil
-	rm.onRev = nil
+	rm.onRevs = nil
 	return true
 }
 
@@ -111,21 +123,27 @@ func (rm *RollbackManager) RevertNow() bool {
 		rm.timer = nil
 	}
 	backups := rm.backups
-	onRev := rm.onRev
+	onRevs := rm.onRevs
 	rm.active = false
 	rm.backups = nil
-	rm.onRev = nil
+	rm.onRevs = nil
 	rm.mu.Unlock()
 
-	for path, data := range backups {
-		if data == nil {
+	for path, snap := range backups {
+		if !snap.exists {
 			_ = os.Remove(path)
 		} else {
-			_ = os.WriteFile(path, data, 0644)
+			mode := snap.mode
+			if mode == 0 {
+				mode = 0644
+			}
+			_ = os.WriteFile(path, snap.data, mode)
+			_ = os.Chmod(path, mode)
 		}
 	}
-	if onRev != nil {
-		onRev()
+	// Run revert hooks in reverse order (LIFO)
+	for i := len(onRevs) - 1; i >= 0; i-- {
+		onRevs[i]()
 	}
 	return true
 }

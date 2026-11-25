@@ -1,6 +1,6 @@
 {
-  "https_addr": "192.168.10.1:443",
-  "http_addr": "192.168.10.1:80",
+  "https_addr": ":443",
+  "http_addr": ":80",
   "tls_dir": "/etc/netbee/tls",
   "web_dir": "/usr/share/netbee/web",
   "state_path": "/etc/netbee/state.json",

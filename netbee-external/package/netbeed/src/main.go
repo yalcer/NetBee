@@ -27,7 +27,7 @@ import (
 
 var version = "0.1.0"
 
-func ensureSelfSignedTLS(tlsDir string) (string, string, error) {
+func ensureSelfSignedTLS(tlsDir, lanIP string) (string, string, error) {
 	if err := os.MkdirAll(tlsDir, 0700); err != nil {
 		return "", "", err
 	}
@@ -37,6 +37,13 @@ func ensureSelfSignedTLS(tlsDir string) (string, string, error) {
 		if _, err := os.Stat(keyPath); err == nil {
 			return certPath, keyPath, nil
 		}
+	}
+
+	ips := []net.IP{net.ParseIP("127.0.0.1")}
+	if parsed := net.ParseIP(lanIP); parsed != nil {
+		ips = append(ips, parsed)
+	} else {
+		ips = append(ips, net.ParseIP("192.168.10.1"))
 	}
 
 	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -67,7 +74,7 @@ func ensureSelfSignedTLS(tlsDir string) (string, string, error) {
 		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 		BasicConstraintsValid: true,
 		DNSNames:              []string{"netbee", "netbee.lan", "localhost"},
-		IPAddresses:           []net.IP{net.ParseIP("192.168.10.1"), net.ParseIP("127.0.0.1")},
+		IPAddresses:           ips,
 	}
 
 	derBytes, err := x509.CreateCertificate(rand.Reader, &tpl, &tpl, &priv.PublicKey, priv)
@@ -108,17 +115,20 @@ func main() {
 		log.Fatalf("init auth manager: %v", err)
 	}
 
-	certPath, keyPath, err := ensureSelfSignedTLS(cfg.TLSDIR)
+	certPath, keyPath, err := ensureSelfSignedTLS(cfg.TLSDIR, store.Get().LAN.IP)
 	if err != nil {
 		log.Fatalf("ensure TLS cert: %v", err)
 	}
 
 	apiSrv := api.NewServer(cfg, store, authMgr, version)
+	// Restore persisted runtime interfaces (e.g. WireGuard wg0) after reboot
+	go apiSrv.RestoreRuntimeOnBoot()
 
 	httpsSrv := &http.Server{
 		Addr:              cfg.HTTPSAddr,
 		Handler:           apiSrv.Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
+		IdleTimeout:       60 * time.Second,
 		TLSConfig: &tls.Config{
 			MinVersion: tls.VersionTLS12,
 		},
@@ -163,3 +173,4 @@ func main() {
 		_ = httpSrv.Shutdown(ctx)
 	}
 }
+
