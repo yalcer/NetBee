@@ -1,0 +1,18 @@
+# NetBee OS - Custom Ownership & Hardened File Permissions Table
+# Applied by host-makedevs inside fakeroot after mkusers runs.
+#
+# <name>				<type>	<mode>	<uid>	<gid>	<major>	<minor>	<start>	<inc>	<count>
+/root					d	700	0	0	-	-	-	-	-
+/root/.ssh				d	700	0	0	-	-	-	-	-
+/root/.profile				F	600	0	0	-	-	-	-	-
+/home/netbee				d	700	netbee	netbee	-	-	-	-	-
+/home/netbee/.ssh			d	700	netbee	netbee	-	-	-	-	-
+/home/netbee/.profile			F	640	netbee	netbee	-	-	-	-	-
+/etc/netbee				d	755	0	0	-	-	-	-	-
+/etc/netbee/tls				d	700	0	0	-	-	-	-	-
+/etc/netbee/netbeed.json		F	600	0	0	-	-	-	-	-
+/etc/wireguard				d	700	0	0	-	-	-	-	-
+/etc/ppp/pap-secrets			F	600	0	0	-	-	-	-	-
+/etc/ppp/chap-secrets			F	600	0	0	-	-	-	-	-
+/etc/cron/crontabs			d	700	0	0	-	-	-	-	-
+/etc/cron/crontabs/root			F	600	0	0	-	-	-	-	-

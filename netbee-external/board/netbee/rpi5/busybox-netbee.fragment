@@ -1,0 +1,3 @@
+# NetBee OS - BusyBox Configuration Fragment
+# Enable chpasswd (used by netbeed & netbee-passwd with SHA-512 default hash)
+CONFIG_CHPASSWD=y

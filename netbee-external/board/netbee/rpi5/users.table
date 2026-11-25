@@ -1,0 +1,11 @@
+# NetBee OS - Pre-Created System & Administrator Users Table
+# Processed by Buildroot support/scripts/mkusers inside fakeroot at image creation time.
+#
+# Syntax:
+# <username> <uid> <group> <gid> <password> <home> <shell> <groups> <comment>
+
+# Interactive CLI / SSH administrator account (initial password: "netbee", hashed with SHA-512)
+netbee 1000 netbee 1000 =netbee /home/netbee /bin/sh wheel,adm,netdev NetBee Administrator
+
+# Dedicated locked system account for unprivileged iperf3 benchmark server
+iperf 110 iperf 110 * - /bin/false - NetBee iperf3 Benchmark Daemon
