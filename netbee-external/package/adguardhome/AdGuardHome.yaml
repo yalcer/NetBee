@@ -8,11 +8,26 @@ dns:
   upstream_dns:
     - https://dns.cloudflare.com/dns-query
     - https://dns.quad9.net/dns-query
+  fallback_dns:
+    - 1.1.1.1
+    - 9.9.9.9
   bootstrap_dns:
     - 1.1.1.1
     - 9.9.9.9
+  cache_size: 4194304
+  cache_optimistic: true
   protection_enabled: true
   filtering_enabled: true
+querylog:
+  enabled: true
+  file_enabled: false
+  interval: 24h
+  size_memory: 1000
+filters:
+  - enabled: true
+    url: https://adguardteam.github.io/HostlistsRegistry/assets/filter_1.txt
+    name: AdGuard DNS filter
+    id: 1
 dhcp:
   enabled: true
   interface_name: eth0
