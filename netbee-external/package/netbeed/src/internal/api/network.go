@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
@@ -544,6 +545,9 @@ func (s *Server) handleSetWAN(w http.ResponseWriter, r *http.Request) {
 
 	_, _ = sys.Run(5*time.Second, "vnstat", "--add", "-i", req.Interface)
 	_, _ = sys.Run(10*time.Second, "ifup", req.Interface)
+	if etCfg, ok := st.Ethtool[req.Interface]; ok {
+		_ = applyEthtoolConfig(req.Interface, etCfg)
+	}
 	_, _ = sys.Run(10*time.Second, "/etc/init.d/S41dhcpcd", "restart")
 	_, _ = sys.Run(10*time.Second, "/etc/init.d/S35nftables", "reload")
 	if st.Firewall.FlowOffload {
@@ -743,6 +747,9 @@ func (s *Server) handleSetLAN(w http.ResponseWriter, r *http.Request) {
 			_, _ = sys.Run(5*time.Second, "vnstat", "--add", "-i", req.Interface)
 			_, _ = sys.Run(3*time.Second, "ip", "addr", "flush", "dev", oldLAN.Interface)
 			_, _ = sys.Run(10*time.Second, "ifup", "--force", req.Interface)
+			if etCfg, ok := stateSnap.Ethtool[req.Interface]; ok {
+				_ = applyEthtoolConfig(req.Interface, etCfg)
+			}
 			_, _ = sys.Run(10*time.Second, "/etc/init.d/S41dhcpcd", "restart")
 			_, _ = sys.Run(5*time.Second, "/etc/init.d/S50dropbear", "restart")
 			_, _ = sys.Run(10*time.Second, "/etc/init.d/S35nftables", "reload")
@@ -762,4 +769,261 @@ func (s *Server) handleSetLAN(w http.ResponseWriter, r *http.Request) {
 		"pending_commit": s.Rollback.Status(),
 		"message":        "LAN IP, DHCP/DNS, SSH bind, and firewall updated; confirm at new_url within rollback window.",
 	})
+}
+
+// --- Ethtool Link, Wake-on-LAN & Hardware Offload Management ---
+
+var ethtoolFeatureMap = map[string]string{
+	"rx":     "rx-checksumming",
+	"tx":     "tx-checksumming",
+	"sg":     "scatter-gather",
+	"tso":    "tcp-segmentation-offload",
+	"gso":    "generic-segmentation-offload",
+	"gro":    "generic-receive-offload",
+	"rxvlan": "rx-vlan-offload",
+	"txvlan": "tx-vlan-offload",
+}
+
+type EthtoolFeatureState struct {
+	Active bool `json:"active"`
+	Fixed  bool `json:"fixed"`
+}
+
+func ParseEthtoolSettings(stdout string) map[string]any {
+	info := map[string]any{
+		"speed":                "",
+		"duplex":               "",
+		"autoneg":              true,
+		"link_detected":        false,
+		"wake_on":              "",
+		"supports_wake_on":     "",
+		"supported_link_modes": []string{},
+	}
+	var modes []string
+	inModes := false
+	for _, raw := range strings.Split(stdout, "\n") {
+		line := strings.TrimSpace(raw)
+		if line == "" {
+			continue
+		}
+		if strings.HasPrefix(line, "Supported link modes:") {
+			inModes = true
+			rest := strings.TrimSpace(strings.TrimPrefix(line, "Supported link modes:"))
+			if rest != "" {
+				modes = append(modes, strings.Fields(rest)...)
+			}
+			continue
+		}
+		if inModes {
+			if strings.Contains(line, ":") {
+				inModes = false
+			} else {
+				modes = append(modes, strings.Fields(line)...)
+				continue
+			}
+		}
+		k, v, ok := strings.Cut(line, ":")
+		if !ok {
+			continue
+		}
+		v = strings.TrimSpace(v)
+		switch strings.TrimSpace(k) {
+		case "Speed":
+			info["speed"] = v
+		case "Duplex":
+			info["duplex"] = v
+		case "Auto-negotiation":
+			info["autoneg"] = strings.EqualFold(v, "on")
+		case "Supports Wake-on":
+			info["supports_wake_on"] = v
+		case "Wake-on":
+			info["wake_on"] = v
+		case "Link detected":
+			info["link_detected"] = strings.EqualFold(v, "yes")
+		}
+	}
+	if len(modes) > 0 {
+		info["supported_link_modes"] = modes
+	}
+	return info
+}
+
+func ParseEthtoolFeatures(stdout string) map[string]EthtoolFeatureState {
+	reverseMap := make(map[string]string, len(ethtoolFeatureMap))
+	for short, full := range ethtoolFeatureMap {
+		reverseMap[full] = short
+	}
+	out := make(map[string]EthtoolFeatureState, len(ethtoolFeatureMap))
+	for _, raw := range strings.Split(stdout, "\n") {
+		k, v, ok := strings.Cut(strings.TrimSpace(raw), ":")
+		if !ok {
+			continue
+		}
+		short, tracked := reverseMap[strings.TrimSpace(k)]
+		if !tracked {
+			continue
+		}
+		v = strings.TrimSpace(v)
+		fixed := strings.Contains(v, "[fixed]")
+		active := strings.HasPrefix(v, "on")
+		out[short] = EthtoolFeatureState{Active: active, Fixed: fixed}
+	}
+	return out
+}
+
+func ValidateEthtoolConfig(cfg config.EthtoolConfig) error {
+	validSpeeds := map[int]bool{0: true, 10: true, 100: true, 1000: true, 2500: true, 5000: true, 10000: true}
+	if !validSpeeds[cfg.Speed] {
+		return fmt.Errorf("invalid speed (supported: 10, 100, 1000, 2500, 5000, 10000)")
+	}
+	if cfg.Duplex != "" && cfg.Duplex != "half" && cfg.Duplex != "full" {
+		return fmt.Errorf("duplex must be 'half', 'full', or empty")
+	}
+	if !cfg.Autoneg && (cfg.Speed == 0 || (cfg.Duplex != "half" && cfg.Duplex != "full")) {
+		return fmt.Errorf("speed and duplex ('half' or 'full') are required when autoneg is false")
+	}
+	if cfg.WoL != "" && cfg.WoL != "d" && cfg.WoL != "g" {
+		return fmt.Errorf("wol must be 'd' (disabled), 'g' (MagicPacket), or empty")
+	}
+	for k := range cfg.Offloads {
+		if _, ok := ethtoolFeatureMap[k]; !ok {
+			return fmt.Errorf("unsupported offload feature %q (allowed: rx, tx, sg, tso, gso, gro, rxvlan, txvlan)", k)
+		}
+	}
+	return nil
+}
+
+func applyEthtoolConfig(iface string, cfg config.EthtoolConfig) error {
+	var sArgs []string
+	if cfg.Autoneg {
+		sArgs = append(sArgs, "autoneg", "on")
+	} else {
+		sArgs = append(sArgs, "speed", fmt.Sprintf("%d", cfg.Speed), "duplex", cfg.Duplex, "autoneg", "off")
+	}
+	if cfg.WoL != "" {
+		sArgs = append(sArgs, "wol", cfg.WoL)
+	}
+	if len(sArgs) > 0 {
+		args := append([]string{"-s", iface}, sArgs...)
+		if _, err := sys.Run(5*time.Second, "ethtool", args...); err != nil {
+			return err
+		}
+	}
+
+	if len(cfg.Offloads) > 0 {
+		keys := make([]string, 0, len(cfg.Offloads))
+		for k := range cfg.Offloads {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		kArgs := []string{"-K", iface}
+		for _, k := range keys {
+			val := "off"
+			if cfg.Offloads[k] {
+				val = "on"
+			}
+			kArgs = append(kArgs, k, val)
+		}
+		if _, err := sys.Run(5*time.Second, "ethtool", kArgs...); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func restorePersistedEthtool(cfgs map[string]config.EthtoolConfig) {
+	for iface, cfg := range cfgs {
+		if !sys.ValidIface(iface) || iface == "lo" {
+			continue
+		}
+		if _, err := os.Stat("/sys/class/net/" + iface); err == nil {
+			_ = applyEthtoolConfig(iface, cfg)
+		}
+	}
+}
+
+func (s *Server) handleGetEthtool(w http.ResponseWriter, r *http.Request) {
+	iface := r.PathValue("iface")
+	if !sys.ValidIface(iface) || iface == "lo" {
+		writeErr(w, http.StatusBadRequest, "invalid Ethernet interface name")
+		return
+	}
+	if _, err := os.Stat("/sys/class/net/" + iface); err != nil {
+		writeErr(w, http.StatusNotFound, "interface not found")
+		return
+	}
+	linkRes, _ := sys.Run(3*time.Second, "ethtool", iface)
+	featRes, _ := sys.Run(3*time.Second, "ethtool", "-k", iface)
+	persisted, hasPersisted := s.Store.Get().Ethtool[iface]
+	var persistedPtr *config.EthtoolConfig
+	if hasPersisted {
+		persistedPtr = &persisted
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"interface": iface,
+		"link":      ParseEthtoolSettings(linkRes.Stdout),
+		"offloads":  ParseEthtoolFeatures(featRes.Stdout),
+		"persisted": persistedPtr,
+	})
+}
+
+func (s *Server) handleSetEthtool(w http.ResponseWriter, r *http.Request) {
+	iface := r.PathValue("iface")
+	if !sys.ValidIface(iface) || iface == "lo" {
+		writeErr(w, http.StatusBadRequest, "invalid Ethernet interface name")
+		return
+	}
+	if _, err := os.Stat("/sys/class/net/" + iface); err != nil {
+		writeErr(w, http.StatusNotFound, "interface not found")
+		return
+	}
+	var req config.EthtoolConfig
+	if err := decodeJSON(r, &req); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid json body")
+		return
+	}
+	req.Duplex = strings.ToLower(strings.TrimSpace(req.Duplex))
+	req.WoL = strings.ToLower(strings.TrimSpace(req.WoL))
+	if err := ValidateEthtoolConfig(req); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	cur := s.Store.Get()
+	// Guard manual LAN speed/duplex override with 60s auto-rollback so link mismatch cannot permanently lock out LAN
+	guarded := iface == cur.LAN.Interface && !req.Autoneg
+	if guarded {
+		s.Rollback.Begin("LAN ethtool link speed/duplex change", time.Duration(s.Cfg.RollbackSeconds)*time.Second, []string{s.Cfg.StatePath}, func() {
+			_ = s.Store.Reload()
+			if prev, ok := s.Store.Get().Ethtool[iface]; ok {
+				_ = applyEthtoolConfig(iface, prev)
+			} else {
+				_, _ = sys.Run(5*time.Second, "ethtool", "-s", iface, "autoneg", "on")
+			}
+		})
+	}
+
+	if err := applyEthtoolConfig(iface, req); err != nil {
+		if guarded {
+			s.Rollback.RevertNow()
+		}
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := s.Store.Update(func(st *config.State) error {
+		st.Ethtool[iface] = req
+		return nil
+	}); err != nil {
+		if guarded {
+			s.Rollback.RevertNow()
+		}
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	resp := map[string]any{"ok": true, "interface": iface, "config": req}
+	if guarded {
+		resp["pending_commit"] = s.Rollback.Status()
+	}
+	writeJSON(w, http.StatusOK, resp)
 }

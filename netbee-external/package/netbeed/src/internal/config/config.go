@@ -15,6 +15,7 @@ type RuntimeConfig struct {
 	WebDir          string   `json:"web_dir"`
 	StatePath       string   `json:"state_path"`
 	AuthPath        string   `json:"auth_path"`
+	CrontabPath     string   `json:"crontab_path"`
 	AdGuardURL      string   `json:"adguard_url"`
 	AdGuardUser     string   `json:"adguard_user"`
 	AdGuardPass     string   `json:"adguard_pass"`
@@ -30,6 +31,7 @@ func DefaultRuntimeConfig() RuntimeConfig {
 		WebDir:          "/usr/share/netbee/web",
 		StatePath:       "/etc/netbee/state.json",
 		AuthPath:        "/etc/netbee/auth.json",
+		CrontabPath:     "/etc/cron/crontabs/root",
 		AdGuardURL:      "http://127.0.0.1:3000",
 		AdGuardUser:     "admin",
 		AdGuardPass:     "netbee",
@@ -103,6 +105,23 @@ type StaticRoute struct {
 	Enabled     bool   `json:"enabled"`
 }
 
+type EthtoolConfig struct {
+	Autoneg  bool            `json:"autoneg"`
+	Speed    int             `json:"speed,omitempty"`  // e.g. 100, 1000, 2500 (used when autoneg=false)
+	Duplex   string          `json:"duplex,omitempty"` // "half" or "full" (used when autoneg=false)
+	WoL      string          `json:"wol,omitempty"`    // "d" (disabled) or "g" (MagicPacket)
+	Offloads map[string]bool `json:"offloads,omitempty"`
+}
+
+type CronJob struct {
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	Schedule string `json:"schedule"`         // 5-field cron expression, e.g. "0 4 * * *"
+	Action   string `json:"action"`           // whitelisted router action
+	Target   string `json:"target,omitempty"` // optional target (e.g. service name for service_restart)
+	Enabled  bool   `json:"enabled"`
+}
+
 type WANState struct {
 	Mode          string `json:"mode"` // "dhcp", "pppoe", "ont_vlan"
 	Interface     string `json:"interface"`
@@ -143,11 +162,13 @@ type WireGuardState struct {
 }
 
 type State struct {
-	WAN          WANState       `json:"wan"`
-	LAN          LANState       `json:"lan"`
-	StaticRoutes []StaticRoute  `json:"static_routes"`
-	Firewall     FirewallState  `json:"firewall"`
-	WireGuard    WireGuardState `json:"wireguard"`
+	WAN          WANState                 `json:"wan"`
+	LAN          LANState                 `json:"lan"`
+	StaticRoutes []StaticRoute            `json:"static_routes"`
+	Ethtool      map[string]EthtoolConfig `json:"ethtool"`
+	CronJobs     []CronJob                `json:"cron_jobs"`
+	Firewall     FirewallState            `json:"firewall"`
+	WireGuard    WireGuardState           `json:"wireguard"`
 }
 
 func DefaultState() State {
@@ -165,6 +186,8 @@ func DefaultState() State {
 			Netmask:   "255.255.255.0",
 		},
 		StaticRoutes: []StaticRoute{},
+		Ethtool:      map[string]EthtoolConfig{},
+		CronJobs:     []CronJob{},
 		Firewall: FirewallState{
 			TransparentDNS:  false,
 			ExposeWireGuard: false,
@@ -210,6 +233,12 @@ func normalizeState(st *State) {
 	if st.StaticRoutes == nil {
 		st.StaticRoutes = []StaticRoute{}
 	}
+	if st.Ethtool == nil {
+		st.Ethtool = map[string]EthtoolConfig{}
+	}
+	if st.CronJobs == nil {
+		st.CronJobs = []CronJob{}
+	}
 	if st.Firewall.WireGuardPort == 0 {
 		st.Firewall.WireGuardPort = 51820
 	}
@@ -252,11 +281,28 @@ func NewStore(path string) (*Store, error) {
 	return s, nil
 }
 
+func cloneEthtoolMap(src map[string]EthtoolConfig) map[string]EthtoolConfig {
+	out := make(map[string]EthtoolConfig, len(src))
+	for k, v := range src {
+		cp := v
+		if v.Offloads != nil {
+			cp.Offloads = make(map[string]bool, len(v.Offloads))
+			for okKey, okVal := range v.Offloads {
+				cp.Offloads[okKey] = okVal
+			}
+		}
+		out[k] = cp
+	}
+	return out
+}
+
 func (s *Store) Get() State {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	cp := s.state
 	cp.StaticRoutes = append([]StaticRoute{}, s.state.StaticRoutes...)
+	cp.Ethtool = cloneEthtoolMap(s.state.Ethtool)
+	cp.CronJobs = append([]CronJob{}, s.state.CronJobs...)
 	cp.Firewall.CustomRules = append([]FirewallRule{}, s.state.Firewall.CustomRules...)
 	cp.Firewall.PortForwards = append([]PortForward{}, s.state.Firewall.PortForwards...)
 	cp.WireGuard.Peers = append([]WireGuardPeer{}, s.state.WireGuard.Peers...)
@@ -268,6 +314,8 @@ func (s *Store) Update(fn func(*State) error) error {
 	defer s.mu.Unlock()
 	next := s.state
 	next.StaticRoutes = append([]StaticRoute{}, s.state.StaticRoutes...)
+	next.Ethtool = cloneEthtoolMap(s.state.Ethtool)
+	next.CronJobs = append([]CronJob{}, s.state.CronJobs...)
 	next.Firewall.CustomRules = append([]FirewallRule{}, s.state.Firewall.CustomRules...)
 	next.Firewall.PortForwards = append([]PortForward{}, s.state.Firewall.PortForwards...)
 	next.WireGuard.Peers = append([]WireGuardPeer{}, s.state.WireGuard.Peers...)
