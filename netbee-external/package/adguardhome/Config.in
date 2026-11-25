@@ -1,0 +1,9 @@
+config BR2_PACKAGE_ADGUARDHOME
+	bool "adguardhome"
+	depends on BR2_aarch64
+	help
+	  AdGuard Home is a network-wide software for blocking ads,
+	  tracking, and malicious domains (DNS + optional DHCP server).
+
+	  https://github.com/AdguardTeam/AdGuardHome
+

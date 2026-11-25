@@ -1,0 +1,52 @@
+#!/bin/sh
+
+DAEMON="AdGuardHome"
+PIDFILE="/var/run/adguardhome.pid"
+CONF="/etc/adguardhome/AdGuardHome.yaml"
+WORKDIR="/var/lib/adguardhome"
+
+start() {
+	printf "Starting %s: " "$DAEMON"
+	mkdir -p "$WORKDIR"
+	start-stop-daemon -S -q -b -m -p "$PIDFILE" \
+		-x /usr/bin/AdGuardHome -- -c "$CONF" -w "$WORKDIR" --no-check-update
+	status=$?
+	if [ "$status" -eq 0 ]; then
+		echo "OK"
+	else
+		echo "FAIL"
+	fi
+	return "$status"
+}
+
+stop() {
+	printf "Stopping %s: " "$DAEMON"
+	start-stop-daemon -K -q -p "$PIDFILE"
+	status=$?
+	if [ "$status" -eq 0 ]; then
+		rm -f "$PIDFILE"
+		echo "OK"
+	else
+		echo "FAIL"
+	fi
+	return "$status"
+}
+
+restart() {
+	stop
+	sleep 1
+	start
+}
+
+case "$1" in
+	start|stop|restart)
+		"$1"
+		;;
+	*)
+		echo "Usage: $0 {start|stop|restart}"
+		exit 1
+		;;
+esac
+
+exit $?
+
