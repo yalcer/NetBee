@@ -1,0 +1,4 @@
+# NetBee OS - Persistent Network Interface Naming (Raspberry Pi 5)
+# Pin Raspberry Pi 5 built-in RP1 Gigabit Ethernet (Cadence macb driver) to eth0 (LAN)
+# so external USB-Ethernet or PCIe NICs can never swap LAN and WAN on boot.
+SUBSYSTEM=="net", ACTION=="add", DRIVERS=="macb", NAME="eth0"

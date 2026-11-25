@@ -1,6 +1,7 @@
 # NetBee OS - Linux Kernel Fragment for Raspberry Pi 5 Router / Firewall / PPPoE
 
-# --- Core Netfilter & nftables ---
+# --- Core Netfilter, IPv6 & nftables ---
+CONFIG_IPV6=y
 CONFIG_NETFILTER=y
 CONFIG_NETFILTER_ADVANCED=y
 CONFIG_NF_CONNTRACK=y

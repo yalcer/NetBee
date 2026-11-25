@@ -1,0 +1,52 @@
+#!/bin/sh
+# NetBee OS - Hardware Watchdog Service (Raspberry Pi 5 /dev/watchdog)
+
+DAEMON="watchdog"
+PIDFILE="/var/run/$DAEMON.pid"
+DEV="/dev/watchdog"
+
+start() {
+	printf "Starting hardware %s: " "$DAEMON"
+	if [ ! -c "$DEV" ]; then
+		echo "SKIP (no $DEV)"
+		return 0
+	fi
+	# Feed every 5s; hardware reboot if hung for 15s
+	start-stop-daemon -S -q -p "$PIDFILE" -m -b \
+		-x /sbin/watchdog -- -F -t 5 -T 15 "$DEV"
+	status=$?
+	if [ "$status" -eq 0 ]; then
+		echo "OK"
+	else
+		echo "FAIL"
+	fi
+	return "$status"
+}
+
+stop() {
+	printf "Stopping hardware %s: " "$DAEMON"
+	if [ ! -f "$PIDFILE" ]; then
+		echo "OK"
+		return 0
+	fi
+	start-stop-daemon -K -q -p "$PIDFILE"
+	rm -f "$PIDFILE"
+	echo "OK"
+}
+
+case "$1" in
+	start|stop)
+		"$1"
+		;;
+	restart)
+		stop
+		sleep 1
+		start
+		;;
+	*)
+		echo "Usage: $0 {start|stop|restart}"
+		exit 1
+		;;
+esac
+
+exit 0

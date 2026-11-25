@@ -1,0 +1,47 @@
+#!/bin/sh
+# NetBee OS - Expand rootfs partition on first boot (Raspberry Pi 5 microSD)
+
+FLAG="/etc/netbee/.rootfs-expanded"
+DISK="/dev/mmcblk0"
+PART="/dev/mmcblk0p2"
+
+start() {
+	[ -f "$FLAG" ] && return 0
+
+	# Only run when booted from Raspberry Pi microSD (/dev/mmcblk0p2)
+	if [ ! -b "$PART" ] || ! grep -q "root=$PART" /proc/cmdline; then
+		return 0
+	fi
+
+	printf "First-boot expanding rootfs (%s): " "$PART"
+	mkdir -p /etc/netbee
+
+	if command -v sfdisk >/dev/null 2>&1 && command -v resize2fs >/dev/null 2>&1; then
+		echo ", +" | sfdisk -N 2 --no-reread --force "$DISK" >/dev/null 2>&1 || {
+			echo "SKIP (partition already full or sfdisk failed)"
+			touch "$FLAG"
+			return 0
+		}
+		if command -v partx >/dev/null 2>&1; then
+			partx -u "$DISK" >/dev/null 2>&1 || true
+		fi
+		resize2fs "$PART" >/dev/null 2>&1 && echo "OK" || echo "WARN (resize2fs)"
+		touch "$FLAG"
+	else
+		echo "SKIP (missing sfdisk/resize2fs)"
+	fi
+}
+
+case "$1" in
+	start)
+		start
+		;;
+	stop|restart)
+		;;
+	*)
+		echo "Usage: $0 {start|stop|restart}"
+		exit 1
+		;;
+esac
+
+exit 0
