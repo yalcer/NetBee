@@ -12,7 +12,7 @@ help:
 	@echo "NetBee OS (Raspberry Pi 5 Router/Firewall) Build Targets:"
 	@echo "  make defconfig        - Load $(DEFCONFIG) into output/"
 	@echo "  make build            - Build full SD card image (output/images/sdcard.img)"
-	@echo "  make qemu             - Boot NetBee OS in QEMU ARM64 (SSH:2222)"
+	@echo "  make qemu             - Boot NetBee OS in QEMU ARM64 (SSH:2222, AGH:3000, HTTPS:8443)"
 	@echo "  make menuconfig       - Customize Buildroot packages & settings"
 	@echo "  make linux-menuconfig - Customize Linux kernel configuration"
 	@echo "  make savedefconfig    - Save current config back to $(DEFCONFIG)"
