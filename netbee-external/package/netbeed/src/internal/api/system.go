@@ -4,12 +4,17 @@ import (
 	"archive/tar"
 	"bytes"
 	"compress/gzip"
+	"crypto/tls"
+	"crypto/x509"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -23,26 +28,30 @@ const (
 	maxBackupUploadBytes       = 16 << 20 // 16 MB compressed max
 	maxBackupUncompressedBytes = 32 << 20 // 32 MB uncompressed max (gzip-bomb guard)
 	maxBackupEntries           = 256
+	sysctlRouterConfPath       = "/etc/sysctl.d/99-netbee-router.conf"
 )
 
 var allowedBackupExactFiles = map[string]bool{
-	"etc/hostname":                  true,
-	"etc/hosts":                     true,
-	"etc/network/interfaces":        true,
-	"etc/nftables.conf":             true,
-	"etc/dhcpcd.conf":               true,
-	"etc/chrony.conf":               true,
-	"etc/radvd.conf":                true,
-	"etc/ppp/pap-secrets":           true,
-	"etc/ppp/chap-secrets":          true,
+	"etc/hostname":                     true,
+	"etc/hosts":                        true,
+	"etc/network/interfaces":           true,
+	"etc/nftables.conf":                true,
+	"etc/nftables.vars":                true,
+	"etc/sysctl.d/99-netbee-router.conf": true,
+	"etc/dhcpcd.conf":                  true,
+	"etc/chrony.conf":                  true,
+	"etc/radvd.conf":                   true,
+	"etc/ppp/pap-secrets":              true,
+	"etc/ppp/chap-secrets":             true,
 	"etc/adguardhome/AdGuardHome.yaml": true,
-	"etc/default/dropbear":          true,
-	"root/.ssh/authorized_keys":     true,
+	"etc/default/dropbear":             true,
+	"root/.ssh/authorized_keys":        true,
 }
 
 var allowedBackupDirs = map[string]bool{
 	"etc":             true,
 	"etc/network":     true,
+	"etc/sysctl.d":    true,
 	"etc/ppp":         true,
 	"etc/adguardhome": true,
 	"etc/default":     true,
@@ -169,7 +178,7 @@ func (s *Server) handleSystemOverview(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleSystemStream sends Server-Sent Events (SSE) every 2 seconds with live CPU %, RAM, temp & per-iface bps.
+// handleSystemStream sends Server-Sent Events (SSE) every 2 seconds with live CPU %, RAM, temp, fan RPM, conntrack & per-iface bps.
 func (s *Server) handleSystemStream(w http.ResponseWriter, r *http.Request) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
@@ -234,14 +243,18 @@ func (s *Server) handleSystemStream(w http.ResponseWriter, r *http.Request) {
 
 			ov := sys.ReadOverview()
 			frame := map[string]any{
-				"time":           now.Format(time.RFC3339),
-				"cpu_pct":        float64(int(cpuPct*10+0.5)) / 10.0,
-				"mem_used_mb":    ov.MemUsedMB,
-				"mem_total_mb":   ov.MemTotalMB,
-				"load_avg":       ov.LoadAvg,
-				"uptime_seconds": ov.UptimeSec,
-				"cpu_temp_c":     ov.CPUTempC,
-				"interfaces":     rates,
+				"time":            now.Format(time.RFC3339),
+				"cpu_pct":         float64(int(cpuPct*10+0.5)) / 10.0,
+				"cpu_freq_mhz":    ov.CPUFreqMHz,
+				"mem_used_mb":     ov.MemUsedMB,
+				"mem_total_mb":    ov.MemTotalMB,
+				"load_avg":        ov.LoadAvg,
+				"uptime_seconds":  ov.UptimeSec,
+				"cpu_temp_c":      ov.CPUTempC,
+				"fan_rpm":         ov.FanRPM,
+				"undervoltage":    ov.Undervoltage,
+				"conntrack_count": ov.ConntrackCount,
+				"interfaces":      rates,
 			}
 			if b, err := sysMarshal(frame); err == nil {
 				_ = rc.SetWriteDeadline(time.Now().Add(10 * time.Second))
@@ -270,18 +283,63 @@ func (s *Server) handleServiceAction(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid action (use start, stop, restart, reload)")
 		return
 	}
-	var script string
-	for _, svc := range sys.ManagedServices {
-		if svc.Name == name {
-			script = svc.InitScript
+
+	// Special handling for netbeed itself (prevent accidental UI lockout via stop)
+	if name == "netbeed" {
+		if action == "stop" {
+			writeErr(w, http.StatusBadRequest, "stopping netbeed over the API would lock out the Web UI; use restart")
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "message": "restarting netbeed in 400ms"})
+		go func() {
+			time.Sleep(400 * time.Millisecond)
+			_, _ = sys.Run(10*time.Second, "/etc/init.d/S90netbeed", "restart")
+		}()
+		return
+	}
+
+	// Special handling for pppd (managed dynamically when WAN mode is pppoe or ont_vlan)
+	if name == "pppd" {
+		wan := s.Store.Get().WAN
+		if action == "stop" {
+			_, _ = sys.Run(5*time.Second, "killall", "pppd")
+			writeJSON(w, http.StatusOK, map[string]any{"ok": true, "output": "pppd stopped"})
+			return
+		}
+		if wan.Mode != "pppoe" && wan.Mode != "ont_vlan" {
+			writeErr(w, http.StatusBadRequest, "WAN mode is not pppoe or ont_vlan")
+			return
+		}
+		_, _ = sys.Run(5*time.Second, "killall", "pppd")
+		res, err := sys.Run(10*time.Second, "pppd", "call", "wan-pppoe")
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "output": strings.TrimSpace(res.Stdout)})
+		return
+	}
+
+	var matched *sys.ManagedServiceDef
+	for i := range sys.ManagedServices {
+		if sys.ManagedServices[i].Name == name {
+			matched = &sys.ManagedServices[i]
 			break
 		}
 	}
-	if script == "" {
+	if matched == nil || matched.InitScript == "" {
 		writeErr(w, http.StatusNotFound, "unknown or non-controllable service")
 		return
 	}
-	res, err := sys.Run(15*time.Second, script, action)
+	if name == "udevd" && action == "stop" {
+		writeErr(w, http.StatusBadRequest, "stopping udevd is disallowed; use restart")
+		return
+	}
+	execAction := action
+	if action == "reload" && !matched.SupportsReload {
+		execAction = "restart"
+	}
+	res, err := sys.Run(15*time.Second, matched.InitScript, execAction)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
@@ -320,6 +378,46 @@ func (s *Server) handleSetHostname(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "hostname": req.Hostname})
 }
 
+func listInstalledTimezones(root string) []string {
+	var zones []string
+	skipTop := map[string]bool{
+		"posix": true, "right": true, "zone.tab": true, "zone1970.tab": true,
+		"iso3166.tab": true, "tzdata.zi": true, "leapseconds": true, "leap-seconds.list": true,
+	}
+	_ = filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
+		if err != nil || p == root {
+			return nil
+		}
+		rel, relErr := filepath.Rel(root, p)
+		if relErr != nil {
+			return nil
+		}
+		top := strings.SplitN(rel, string(os.PathSeparator), 2)[0]
+		if skipTop[top] {
+			if d.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !d.IsDir() && sys.ValidTimezone(rel) {
+			zones = append(zones, filepath.ToSlash(rel))
+		}
+		return nil
+	})
+	sort.Strings(zones)
+	if zones == nil {
+		zones = []string{"UTC"}
+	}
+	return zones
+}
+
+func (s *Server) handleGetTimezones(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]any{
+		"current":   sys.ReadTimezone(),
+		"timezones": listInstalledTimezones("/usr/share/zoneinfo"),
+	})
+}
+
 func (s *Server) handleSetTimezone(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Timezone string `json:"timezone"`
@@ -339,6 +437,187 @@ func (s *Server) handleSetTimezone(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "timezone": req.Timezone})
+}
+
+// --- Kernel Router Sysctl Tuning (/etc/sysctl.d/99-netbee-router.conf) ---
+
+type RouterSysctlConfig struct {
+	ConntrackMax      int  `json:"conntrack_max"`
+	TCPSynCookies     bool `json:"tcp_syncookies"`
+	RPFilter          int  `json:"rp_filter"` // 0=off, 1=strict, 2=loose
+	IgnoreBroadcast   bool `json:"icmp_echo_ignore_broadcasts"`
+	IPv4Forwarding    bool `json:"ipv4_forwarding"`
+	IPv6Forwarding    bool `json:"ipv6_forwarding"`
+}
+
+func readProcInt(path string, def int) int {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return def
+	}
+	v, err := strconv.Atoi(strings.TrimSpace(string(b)))
+	if err != nil {
+		return def
+	}
+	return v
+}
+
+func ReadRouterSysctl() RouterSysctlConfig {
+	return RouterSysctlConfig{
+		ConntrackMax:    readProcInt("/proc/sys/net/netfilter/nf_conntrack_max", 131072),
+		TCPSynCookies:   readProcInt("/proc/sys/net/ipv4/tcp_syncookies", 1) == 1,
+		RPFilter:        readProcInt("/proc/sys/net/ipv4/conf/all/rp_filter", 1),
+		IgnoreBroadcast: readProcInt("/proc/sys/net/ipv4/icmp_echo_ignore_broadcasts", 1) == 1,
+		IPv4Forwarding:  readProcInt("/proc/sys/net/ipv4/ip_forward", 1) == 1,
+		IPv6Forwarding:  readProcInt("/proc/sys/net/ipv6/conf/all/forwarding", 1) == 1,
+	}
+}
+
+func RenderRouterSysctlConf(c RouterSysctlConfig) string {
+	b2i := func(v bool) int {
+		if v {
+			return 1
+		}
+		return 0
+	}
+	return fmt.Sprintf(
+		"# Managed by NetBee OS (netbeed) - Router & Firewall Kernel Parameters\n"+
+			"net.ipv4.ip_forward = %d\n"+
+			"net.ipv6.conf.all.forwarding = %d\n"+
+			"net.ipv4.conf.all.rp_filter = %d\n"+
+			"net.ipv4.conf.default.rp_filter = %d\n"+
+			"net.ipv4.tcp_syncookies = %d\n"+
+			"net.ipv4.conf.all.accept_redirects = 0\n"+
+			"net.ipv4.conf.default.accept_redirects = 0\n"+
+			"net.ipv4.conf.all.send_redirects = 0\n"+
+			"net.ipv4.conf.all.accept_source_route = 0\n"+
+			"net.ipv6.conf.all.accept_redirects = 0\n"+
+			"net.ipv4.icmp_echo_ignore_broadcasts = %d\n"+
+			"net.netfilter.nf_conntrack_max = %d\n"+
+			"net.core.rmem_max = 16777216\n"+
+			"net.core.wmem_max = 16777216\n",
+		b2i(c.IPv4Forwarding), b2i(c.IPv6Forwarding), c.RPFilter, c.RPFilter,
+		b2i(c.TCPSynCookies), b2i(c.IgnoreBroadcast), c.ConntrackMax,
+	)
+}
+
+func (s *Server) handleGetSysctl(w http.ResponseWriter, r *http.Request) {
+	ctCount, _ := sys.ReadConntrackCounts()
+	writeJSON(w, http.StatusOK, map[string]any{
+		"config":          ReadRouterSysctl(),
+		"conntrack_count": ctCount,
+	})
+}
+
+func (s *Server) handleSetSysctl(w http.ResponseWriter, r *http.Request) {
+	var req RouterSysctlConfig
+	if err := decodeJSON(r, &req); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid json body")
+		return
+	}
+	if req.ConntrackMax < 4096 || req.ConntrackMax > 1048576 {
+		writeErr(w, http.StatusBadRequest, "conntrack_max must be between 4096 and 1048576")
+		return
+	}
+	if req.RPFilter < 0 || req.RPFilter > 2 {
+		writeErr(w, http.StatusBadRequest, "rp_filter must be 0, 1, or 2")
+		return
+	}
+	if err := config.AtomicWriteFile(sysctlRouterConfPath, []byte(RenderRouterSysctlConf(req)), 0644); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	_, _ = sys.Run(5*time.Second, "sysctl", "-p", sysctlRouterConfPath)
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "config": req})
+}
+
+// --- HTTPS TLS Certificate Inspection & Upload ---
+
+func (s *Server) handleGetTLS(w http.ResponseWriter, r *http.Request) {
+	certPath := filepath.Join(s.Cfg.TLSDIR, "server.crt")
+	pemBytes, err := os.ReadFile(certPath)
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"present": false})
+		return
+	}
+	block, _ := pem.Decode(pemBytes)
+	if block == nil {
+		writeJSON(w, http.StatusOK, map[string]any{"present": false})
+		return
+	}
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	ips := []string{}
+	for _, ip := range cert.IPAddresses {
+		ips = append(ips, ip.String())
+	}
+	dnsNames := cert.DNSNames
+	if dnsNames == nil {
+		dnsNames = []string{}
+	}
+	isAuto := len(cert.Issuer.Organization) == 1 && cert.Issuer.Organization[0] == "NetBee OS" && cert.Subject.CommonName == "netbee.lan"
+	writeJSON(w, http.StatusOK, map[string]any{
+		"present":       true,
+		"subject":       cert.Subject.String(),
+		"issuer":        cert.Issuer.String(),
+		"not_before":    cert.NotBefore.Format(time.RFC3339),
+		"not_after":     cert.NotAfter.Format(time.RFC3339),
+		"dns_names":     dnsNames,
+		"ip_addresses":  ips,
+		"auto_self_signed": isAuto,
+	})
+}
+
+func (s *Server) handleSetTLS(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		CertPEM string `json:"cert_pem"`
+		KeyPEM  string `json:"key_pem"`
+		Reload  bool   `json:"reload"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid json body")
+		return
+	}
+	kp, err := tls.X509KeyPair([]byte(req.CertPEM), []byte(req.KeyPEM))
+	if err != nil || len(kp.Certificate) == 0 {
+		writeErr(w, http.StatusBadRequest, "invalid TLS certificate/private key pair")
+		return
+	}
+	if _, err := x509.ParseCertificate(kp.Certificate[0]); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid X.509 leaf certificate")
+		return
+	}
+	if err := os.MkdirAll(s.Cfg.TLSDIR, 0700); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if err := config.AtomicWriteFile(filepath.Join(s.Cfg.TLSDIR, "server.crt"), []byte(req.CertPEM), 0644); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if err := config.AtomicWriteFile(filepath.Join(s.Cfg.TLSDIR, "server.key"), []byte(req.KeyPEM), 0600); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if req.Reload {
+		go func() {
+			time.Sleep(400 * time.Millisecond)
+			_, _ = sys.Run(10*time.Second, "/etc/init.d/S90netbeed", "restart")
+		}()
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "reloading": req.Reload})
+}
+
+func (s *Server) handleDeleteTLS(w http.ResponseWriter, r *http.Request) {
+	_ = os.Remove(filepath.Join(s.Cfg.TLSDIR, "server.crt"))
+	_ = os.Remove(filepath.Join(s.Cfg.TLSDIR, "server.key"))
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok":      true,
+		"message": "custom TLS certificate removed; restart netbeed to auto-generate a fresh self-signed certificate",
+	})
 }
 
 func (s *Server) handleReboot(w http.ResponseWriter, r *http.Request) {
@@ -495,7 +774,6 @@ func ValidateBackupTarGz(data []byte) error {
 		case tar.TypeXHeader, tar.TypeXGlobalHeader:
 			continue
 		default:
-			// Reject TypeSymlink, TypeLink, TypeChar, TypeBlock, TypeFifo
 			return fmt.Errorf("unsupported or unsafe tar entry type (%c) for %s", hdr.Typeflag, hdr.Name)
 		}
 	}
@@ -599,4 +877,21 @@ func (s *Server) handleKernelLogs(w http.ResponseWriter, r *http.Request) {
 		out = out[len(out)-lines:]
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"lines": out, "count": len(out)})
+}
+
+func (s *Server) handleLogsRotate(w http.ResponseWriter, r *http.Request) {
+	if _, err := sys.Run(10*time.Second, "/usr/sbin/logrotate", "-f", "/etc/logrotate.conf"); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+func (s *Server) handleLogsClear(w http.ResponseWriter, r *http.Request) {
+	// Truncate in-place so syslogd's open file descriptor continues writing cleanly
+	if err := os.Truncate("/var/log/messages", 0); err != nil && !os.IsNotExist(err) {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
