@@ -1,0 +1,49 @@
+#!/bin/sh
+# NetBee OS - Enable nftables software flow offload when both eth0 and eth1 exist
+
+start() {
+	printf "Enabling nftables flow offload: "
+	if [ ! -d /sys/class/net/eth0 ] || [ ! -d /sys/class/net/eth1 ]; then
+		echo "SKIP (waiting for eth0+eth1)"
+		return 0
+	fi
+	if /usr/sbin/nft list flowtable inet netbee_fw fastpath >/dev/null 2>&1; then
+		echo "OK (already active)"
+		return 0
+	fi
+	/usr/sbin/nft -f - <<'EOF'
+add flowtable inet netbee_fw fastpath { hook ingress priority 0; devices = { eth0, eth1 }; }
+insert rule inet netbee_fw forward ip protocol { tcp, udp } ct state established flow add @fastpath
+EOF
+	status=$?
+	if [ "$status" -eq 0 ]; then
+		echo "OK"
+	else
+		echo "FAIL"
+	fi
+	return "$status"
+}
+
+stop() {
+	printf "Reloading nftables without flow offload: "
+	/etc/init.d/S35nftables reload >/dev/null 2>&1 && echo "OK" || echo "FAIL"
+}
+
+case "$1" in
+	start)
+		start
+		;;
+	stop)
+		stop
+		;;
+	restart|reload)
+		stop
+		start
+		;;
+	*)
+		echo "Usage: $0 {start|stop|restart|reload}"
+		exit 1
+		;;
+esac
+
+exit $?
