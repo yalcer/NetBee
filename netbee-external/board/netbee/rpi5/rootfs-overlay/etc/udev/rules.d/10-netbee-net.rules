@@ -1,4 +1,5 @@
-# NetBee OS - Persistent Network Interface Naming (Raspberry Pi 5)
-# Pin Raspberry Pi 5 built-in RP1 Gigabit Ethernet (Cadence macb driver) to eth0 (LAN)
-# so external USB-Ethernet or PCIe NICs can never swap LAN and WAN on boot.
-SUBSYSTEM=="net", ACTION=="add", DRIVERS=="macb", NAME="eth0"
+# NetBee OS - WAN Hotplug Hook
+# Built-in RPi 5 RP1 Ethernet (macb=y) always probes first as eth0 (LAN),
+# while external USB/PCIe NICs load as modules (=m) for eth1 (WAN).
+# Trigger vnstat & offload/SQM automatically if eth1 is hotplugged after boot.
+SUBSYSTEM=="net", ACTION=="add", KERNEL=="eth1", RUN+="/usr/sbin/netbee-hotplug-wan"

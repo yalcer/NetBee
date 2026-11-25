@@ -1,0 +1,15 @@
+#!/bin/sh
+# NetBee OS - PPPoE ip-down hook ($1 = ppp interface name, e.g. ppp0)
+
+IFACE="$1"
+[ -n "$IFACE" ] || exit 0
+
+if [ -r /etc/netbee/sqm.conf ]; then
+	WAN_IF=""
+	. /etc/netbee/sqm.conf
+	if [ "$WAN_IF" = "$IFACE" ]; then
+		/usr/sbin/netbee-sqm stop >/dev/null 2>&1 || true
+	fi
+fi
+
+exit 0

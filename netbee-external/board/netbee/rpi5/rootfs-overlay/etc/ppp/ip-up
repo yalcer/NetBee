@@ -1,0 +1,20 @@
+#!/bin/sh
+# NetBee OS - PPPoE ip-up hook ($1 = ppp interface name, e.g. ppp0)
+
+IFACE="$1"
+[ -n "$IFACE" ] || exit 0
+
+if pidof vnstatd >/dev/null 2>&1; then
+	/usr/bin/vnstat --add -i "$IFACE" >/dev/null 2>&1 || true
+fi
+
+if [ -r /etc/netbee/sqm.conf ]; then
+	ENABLED=0
+	WAN_IF=""
+	. /etc/netbee/sqm.conf
+	if [ "$ENABLED" = "1" ] && [ "$WAN_IF" = "$IFACE" ]; then
+		/usr/sbin/netbee-sqm restart >/dev/null 2>&1 || true
+	fi
+fi
+
+exit 0
