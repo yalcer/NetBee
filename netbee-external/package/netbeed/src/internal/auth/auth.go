@@ -22,6 +22,16 @@ const (
 	SessionCookieName = "netbee_session"
 	sessionTTL        = 12 * time.Hour
 	pbkdf2Iterations  = 100000
+	maxActiveSessions = 64
+	maxRateEntries    = 1024
+)
+
+type Source int
+
+const (
+	SourceNone Source = iota
+	SourceBearer
+	SourceCookie
 )
 
 type Credentials struct {
@@ -36,6 +46,7 @@ type Session struct {
 	Token     string
 	Username  string
 	CSRFToken string
+	CreatedAt time.Time
 	ExpiresAt time.Time
 }
 
@@ -45,11 +56,12 @@ type rateEntry struct {
 }
 
 type Manager struct {
-	mu       sync.RWMutex
-	path     string
-	creds    Credentials
-	sessions map[string]Session
-	rates    map[string]rateEntry
+	mu        sync.RWMutex
+	path      string
+	creds     Credentials
+	dummySalt [16]byte
+	sessions  map[string]Session
+	rates     map[string]rateEntry
 }
 
 func NewManager(path string) (*Manager, error) {
@@ -58,6 +70,7 @@ func NewManager(path string) (*Manager, error) {
 		sessions: make(map[string]Session),
 		rates:    make(map[string]rateEntry),
 	}
+	_, _ = rand.Read(m.dummySalt[:])
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if !os.IsNotExist(err) {
@@ -76,6 +89,27 @@ func NewManager(path string) (*Manager, error) {
 		return nil, err
 	}
 	return m, nil
+}
+
+// Reload re-reads credentials from disk and invalidates old in-memory sessions (e.g. after backup restore).
+func (m *Manager) Reload() error {
+	data, err := os.ReadFile(m.path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	var next Credentials
+	if err := json.Unmarshal(data, &next); err != nil {
+		return err
+	}
+	m.mu.Lock()
+	m.creds = next
+	m.sessions = make(map[string]Session)
+	m.rates = make(map[string]rateEntry)
+	m.mu.Unlock()
+	return nil
 }
 
 // pbkdf2SHA256 implements RFC 2898 PBKDF2-HMAC-SHA256 using only Go stdlib.
@@ -142,49 +176,67 @@ func clientIP(r *http.Request) string {
 
 func (m *Manager) checkRateLimitLocked(ip string) bool {
 	now := time.Now()
-	// Prevent unbounded map growth under scanning/long uptime
-	if len(m.rates) > 256 {
-		for k, v := range m.rates {
-			if now.Sub(v.windowAt) > 5*time.Minute {
-				delete(m.rates, k)
-			}
-		}
-	}
 	ent, ok := m.rates[ip]
-	if !ok || now.Sub(ent.windowAt) > time.Minute {
-		m.rates[ip] = rateEntry{attempts: 1, windowAt: now}
+	if ok && now.Sub(ent.windowAt) <= time.Minute {
+		if ent.attempts >= 10 {
+			return false
+		}
+		ent.attempts++
+		m.rates[ip] = ent
 		return true
 	}
-	if ent.attempts >= 10 {
-		return false
+
+	// Prune stale entries first, then enforce hard ceiling against IPv6/spoofed-IP memory exhaustion
+	if len(m.rates) >= maxRateEntries {
+		var oldestKey string
+		var oldestAt time.Time
+		for k, v := range m.rates {
+			if now.Sub(v.windowAt) > time.Minute {
+				delete(m.rates, k)
+				continue
+			}
+			if oldestKey == "" || v.windowAt.Before(oldestAt) {
+				oldestKey = k
+				oldestAt = v.windowAt
+			}
+		}
+		if len(m.rates) >= maxRateEntries && oldestKey != "" {
+			delete(m.rates, oldestKey)
+		}
 	}
-	ent.attempts++
-	m.rates[ip] = ent
+	m.rates[ip] = rateEntry{attempts: 1, windowAt: now}
 	return true
 }
 
 func (m *Manager) VerifyPassword(username, password string) bool {
+	// Bound input size BEFORE PBKDF2 to defeat pre-auth CPU exhaustion
+	if len(username) == 0 || len(username) > 64 || len(password) == 0 || len(password) > 128 {
+		return false
+	}
+
 	m.mu.RLock()
 	creds := m.creds
+	dummySalt := m.dummySalt
 	m.mu.RUnlock()
 
-	if !hmac.Equal([]byte(username), []byte(creds.Username)) {
-		return false
+	salt, errSalt := hex.DecodeString(creds.SaltHex)
+	expected, errHash := hex.DecodeString(creds.HashHex)
+	if errSalt != nil || len(salt) == 0 {
+		salt = dummySalt[:]
 	}
-	salt, err := hex.DecodeString(creds.SaltHex)
-	if err != nil {
-		return false
-	}
-	expected, err := hex.DecodeString(creds.HashHex)
-	if err != nil {
-		return false
+	if errHash != nil || len(expected) == 0 {
+		expected = make([]byte, 32)
 	}
 	iter := creds.Iterations
 	if iter <= 0 {
 		iter = pbkdf2Iterations
 	}
+
+	// Always run PBKDF2 regardless of username match to eliminate username timing side-channels
 	actual := pbkdf2SHA256([]byte(password), salt, iter, len(expected))
-	return hmac.Equal(actual, expected)
+	userOK := hmac.Equal([]byte(username), []byte(creds.Username))
+	passOK := errSalt == nil && errHash == nil && hmac.Equal(actual, expected)
+	return userOK && passOK
 }
 
 func (m *Manager) Login(r *http.Request, username, password string) (Session, error) {
@@ -208,20 +260,30 @@ func (m *Manager) Login(r *http.Request, username, password string) (Session, er
 	if err != nil {
 		return Session{}, err
 	}
+	now := time.Now()
 	sess := Session{
 		Token:     tok,
 		Username:  username,
 		CSRFToken: csrf,
-		ExpiresAt: time.Now().Add(sessionTTL),
+		CreatedAt: now,
+		ExpiresAt: now.Add(sessionTTL),
 	}
 
 	m.mu.Lock()
-	// Prune expired sessions
-	now := time.Now()
+	var oldestTok string
+	var oldestAt time.Time
 	for k, v := range m.sessions {
 		if now.After(v.ExpiresAt) {
 			delete(m.sessions, k)
+			continue
 		}
+		if oldestTok == "" || v.CreatedAt.Before(oldestAt) {
+			oldestTok = k
+			oldestAt = v.CreatedAt
+		}
+	}
+	if len(m.sessions) >= maxActiveSessions && oldestTok != "" {
+		delete(m.sessions, oldestTok)
 	}
 	m.sessions[tok] = sess
 	delete(m.rates, ip)
@@ -275,14 +337,26 @@ func (m *Manager) MustChangePassword() bool {
 }
 
 func (m *Manager) Authenticate(r *http.Request) (Session, bool) {
+	sess, _, ok := m.AuthenticateWithSource(r)
+	return sess, ok
+}
+
+func (m *Manager) AuthenticateWithSource(r *http.Request) (Session, Source, bool) {
 	var token string
-	if authHdr := r.Header.Get("Authorization"); strings.HasPrefix(authHdr, "Bearer ") {
-		token = strings.TrimSpace(strings.TrimPrefix(authHdr, "Bearer "))
+	src := SourceNone
+	if authHdr := r.Header.Get("Authorization"); authHdr != "" {
+		if len(authHdr) > 7 && strings.EqualFold(authHdr[:7], "Bearer ") {
+			token = strings.TrimSpace(authHdr[7:])
+			src = SourceBearer
+		} else {
+			return Session{}, SourceNone, false
+		}
 	} else if c, err := r.Cookie(SessionCookieName); err == nil {
 		token = c.Value
+		src = SourceCookie
 	}
 	if token == "" {
-		return Session{}, false
+		return Session{}, SourceNone, false
 	}
 
 	m.mu.RLock()
@@ -292,8 +366,7 @@ func (m *Manager) Authenticate(r *http.Request) (Session, bool) {
 		if ok {
 			m.Logout(token)
 		}
-		return Session{}, false
+		return Session{}, SourceNone, false
 	}
-	return sess, true
+	return sess, src, true
 }
-

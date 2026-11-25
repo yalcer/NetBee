@@ -12,13 +12,15 @@ etc/nftables.d
 etc/dhcpcd.conf
 etc/chrony.conf
 etc/radvd.conf
-etc/ppp
+etc/ppp/peers
+etc/ppp/pap-secrets
+etc/ppp/chap-secrets
 etc/netbee
 etc/wireguard
 etc/adguardhome/AdGuardHome.yaml
 etc/dropbear
 etc/default/dropbear
-etc/cron/crontabs/root
+root/.ssh/authorized_keys
 "
 
 usage() {
@@ -51,8 +53,9 @@ case "$cmd" in
 			echo "Error: Backup archive not found: ${IN:-<missing>}" >&2
 			exit 1
 		fi
-		tar -xzf "$IN" -C /
-		chmod 0600 /etc/ppp/pap-secrets /etc/ppp/chap-secrets /etc/cron/crontabs/root 2>/dev/null || true
+		tar -xzf "$IN" --no-same-owner --no-same-permissions -C /
+		chmod 0700 /etc/netbee/tls /etc/wireguard /root/.ssh 2>/dev/null || true
+		chmod 0600 /etc/ppp/pap-secrets /etc/ppp/chap-secrets /etc/netbee/state.json /etc/netbee/auth.json /etc/netbee/netbeed.json /etc/netbee/tls/server.key /etc/wireguard/wg0.conf /root/.ssh/authorized_keys 2>/dev/null || true
 		echo "Backup restored from: $IN"
 		echo "Reboot ('reboot') or restart affected services to apply all changes."
 		;;

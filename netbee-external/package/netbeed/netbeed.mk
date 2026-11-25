@@ -15,7 +15,7 @@ NETBEED_LDFLAGS = -s -w -X main.version=$(NETBEED_VERSION)
 
 define NETBEED_INSTALL_TARGET_CMDS
 	$(INSTALL) -D -m 0755 $(@D)/bin/netbeed $(TARGET_DIR)/usr/bin/netbeed
-	$(INSTALL) -D -m 0640 $(NETBEED_PKGDIR)/netbeed.json \
+	$(INSTALL) -D -m 0600 $(NETBEED_PKGDIR)/netbeed.json \
 		$(TARGET_DIR)/etc/netbee/netbeed.json
 	mkdir -p $(TARGET_DIR)/usr/share/netbee/web
 endef

@@ -1,11 +1,15 @@
 package api
 
 import (
+	"bytes"
 	"crypto/hmac"
 	"encoding/json"
+	"errors"
 	"io"
 	"log"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -16,6 +20,8 @@ import (
 	"github.com/yalcer/netbee/netbeed/internal/sys"
 )
 
+var errPayloadTooLarge = errors.New("request body exceeds maximum allowed size")
+
 type Server struct {
 	Cfg      config.RuntimeConfig
 	Store    *config.Store
@@ -23,6 +29,7 @@ type Server struct {
 	Rollback *sys.RollbackManager
 	Version  string
 	HTTPCli  *http.Client
+	diagSem  chan struct{}
 }
 
 func NewServer(cfg config.RuntimeConfig, store *config.Store, authMgr *auth.Manager, version string) *Server {
@@ -33,6 +40,16 @@ func NewServer(cfg config.RuntimeConfig, store *config.Store, authMgr *auth.Mana
 		Rollback: sys.NewRollbackManager(),
 		Version:  version,
 		HTTPCli:  &http.Client{Timeout: 8 * time.Second},
+		diagSem:  make(chan struct{}, 2),
+	}
+}
+
+func (s *Server) acquireDiagSlot() (func(), bool) {
+	select {
+	case s.diagSem <- struct{}{}:
+		return func() { <-s.diagSem }, true
+	default:
+		return nil, false
 	}
 }
 
@@ -152,13 +169,19 @@ func (s *Server) securityHeaders(next http.Handler) http.Handler {
 func (s *Server) corsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		origin := r.Header.Get("Origin")
-		if origin != "" && s.originAllowed(origin) {
-			w.Header().Set("Access-Control-Allow-Origin", origin)
-			w.Header().Set("Access-Control-Allow-Credentials", "true")
-			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
-			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-CSRF-Token")
-			if r.Method == http.MethodOptions {
-				w.WriteHeader(http.StatusNoContent)
+		if origin != "" {
+			w.Header().Add("Vary", "Origin")
+			if s.originAllowed(origin) {
+				w.Header().Set("Access-Control-Allow-Origin", origin)
+				w.Header().Set("Access-Control-Allow-Credentials", "true")
+				w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
+				w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-CSRF-Token")
+				if r.Method == http.MethodOptions {
+					w.WriteHeader(http.StatusNoContent)
+					return
+				}
+			} else if r.Method == http.MethodOptions && !isSameOrigin(r, origin) {
+				writeErr(w, http.StatusForbidden, "origin not allowed")
 				return
 			}
 		}
@@ -166,13 +189,41 @@ func (s *Server) corsMiddleware(next http.Handler) http.Handler {
 	})
 }
 
+// originAllowed never permits wildcard "*" with credentials, preventing cross-origin credential theft.
 func (s *Server) originAllowed(origin string) bool {
+	if origin == "" || origin == "*" {
+		return false
+	}
 	for _, allowed := range s.Cfg.CORSOrigins {
-		if allowed == "*" || allowed == origin {
+		if allowed != "" && allowed != "*" && strings.EqualFold(allowed, origin) {
 			return true
 		}
 	}
 	return false
+}
+
+func normalizeHostPort(hostPort, scheme string) string {
+	hostPort = strings.ToLower(strings.TrimSpace(hostPort))
+	h, p, err := net.SplitHostPort(hostPort)
+	if err != nil {
+		return hostPort
+	}
+	if (scheme == "https" && p == "443") || (scheme == "http" && p == "80") {
+		return h
+	}
+	return net.JoinHostPort(h, p)
+}
+
+func isSameOrigin(r *http.Request, origin string) bool {
+	u, err := url.Parse(origin)
+	if err != nil || u.Host == "" || r.Host == "" {
+		return false
+	}
+	reqScheme := "http"
+	if r.TLS != nil {
+		reqScheme = "https"
+	}
+	return normalizeHostPort(u.Host, strings.ToLower(u.Scheme)) == normalizeHostPort(r.Host, reqScheme)
 }
 
 func (s *Server) RestoreRuntimeOnBoot() {
@@ -188,19 +239,26 @@ func (s *Server) RestoreRuntimeOnBoot() {
 
 func (s *Server) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		sess, ok := s.Auth.Authenticate(r)
+		sess, src, ok := s.Auth.AuthenticateWithSource(r)
 		if !ok {
 			writeErr(w, http.StatusUnauthorized, "authentication required")
 			return
 		}
-		// Strictly enforce X-CSRF-Token on all cookie-authenticated mutating requests
-		if r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions {
-			if !strings.HasPrefix(r.Header.Get("Authorization"), "Bearer ") {
-				hdr := r.Header.Get("X-CSRF-Token")
-				if hdr == "" || !hmac.Equal([]byte(hdr), []byte(sess.CSRFToken)) {
-					writeErr(w, http.StatusForbidden, "missing or invalid CSRF token")
+		// Enforce Origin/Sec-Fetch-Site + X-CSRF-Token on all cookie-authenticated mutating requests
+		if src == auth.SourceCookie && r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions {
+			if origin := r.Header.Get("Origin"); origin != "" {
+				if !isSameOrigin(r, origin) && !s.originAllowed(origin) {
+					writeErr(w, http.StatusForbidden, "cross-origin cookie request rejected")
 					return
 				}
+			} else if strings.EqualFold(r.Header.Get("Sec-Fetch-Site"), "cross-site") {
+				writeErr(w, http.StatusForbidden, "cross-site cookie request rejected")
+				return
+			}
+			hdr := r.Header.Get("X-CSRF-Token")
+			if hdr == "" || !hmac.Equal([]byte(hdr), []byte(sess.CSRFToken)) {
+				writeErr(w, http.StatusForbidden, "missing or invalid CSRF token")
+				return
 			}
 		}
 		next(w, r)
@@ -243,20 +301,60 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	_ = json.NewEncoder(w).Encode(v)
 }
 
-func writeRawJSON(w http.ResponseWriter, status int, raw []byte) {
+func writeValidatedRawJSON(w http.ResponseWriter, status int, raw []byte, emptyFallback string) {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 {
+		if emptyFallback == "" {
+			emptyFallback = "{}"
+		}
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		w.WriteHeader(status)
+		_, _ = w.Write([]byte(emptyFallback))
+		return
+	}
+	if !json.Valid(trimmed) {
+		writeJSON(w, http.StatusBadGateway, map[string]any{
+			"error": "command returned invalid JSON output",
+			"raw":   string(trimmed),
+		})
+		return
+	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(status)
-	_, _ = w.Write(raw)
+	_, _ = w.Write(trimmed)
 }
 
 func writeErr(w http.ResponseWriter, status int, msg string) {
 	writeJSON(w, status, map[string]any{"error": msg})
 }
 
-func decodeJSON(r *http.Request, dst any) error {
+func readBoundedBody(r *http.Request, maxBytes int64) ([]byte, error) {
+	if r.Body == nil {
+		return nil, nil
+	}
 	defer r.Body.Close()
-	lim := io.LimitReader(r.Body, 1<<20) // 1 MB max JSON payload
-	dec := json.NewDecoder(lim)
-	return dec.Decode(dst)
+	buf, err := io.ReadAll(io.LimitReader(r.Body, maxBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(buf)) > maxBytes {
+		return nil, errPayloadTooLarge
+	}
+	return buf, nil
 }
 
+func decodeJSON(r *http.Request, dst any) error {
+	buf, err := readBoundedBody(r, 1<<20) // 1 MB max JSON payload
+	if err != nil {
+		return err
+	}
+	dec := json.NewDecoder(bytes.NewReader(buf))
+	if err := dec.Decode(dst); err != nil {
+		return err
+	}
+	// Reject trailing garbage or concatenated JSON payloads
+	if err := dec.Decode(&struct{}{}); err != io.EOF {
+		return errors.New("unexpected trailing data after JSON payload")
+	}
+	return nil
+}

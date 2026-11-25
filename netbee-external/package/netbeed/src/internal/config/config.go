@@ -177,20 +177,58 @@ type Store struct {
 	state State
 }
 
+func normalizeState(st *State) {
+	if st.WAN.Interface == "" {
+		st.WAN.Interface = "eth1"
+	}
+	if st.WAN.Mode == "" {
+		st.WAN.Mode = "dhcp"
+	}
+	if st.WAN.MTU == 0 {
+		st.WAN.MTU = 1492
+	}
+	if st.LAN.Interface == "" {
+		st.LAN.Interface = "eth0"
+	}
+	if st.LAN.IP == "" {
+		st.LAN.IP = "192.168.10.1"
+	}
+	if st.LAN.Netmask == "" {
+		st.LAN.Netmask = "255.255.255.0"
+	}
+	if st.Firewall.WireGuardPort == 0 {
+		st.Firewall.WireGuardPort = 51820
+	}
+	if st.Firewall.CustomRules == nil {
+		st.Firewall.CustomRules = []FirewallRule{}
+	}
+	if st.Firewall.PortForwards == nil {
+		st.Firewall.PortForwards = []PortForward{}
+	}
+	if st.WireGuard.Interface == "" {
+		st.WireGuard.Interface = "wg0"
+	}
+	if st.WireGuard.Address == "" {
+		st.WireGuard.Address = "10.66.66.1/24"
+	}
+	if st.WireGuard.ListenPort == 0 {
+		st.WireGuard.ListenPort = 51820
+	}
+	if st.WireGuard.Peers == nil {
+		st.WireGuard.Peers = []WireGuardPeer{}
+	}
+}
+
 func NewStore(path string) (*Store, error) {
 	s := &Store{path: path, state: DefaultState()}
 	if data, err := os.ReadFile(path); err == nil {
-		_ = json.Unmarshal(data, &s.state)
+		if err := json.Unmarshal(data, &s.state); err != nil {
+			return nil, err
+		}
+	} else if !os.IsNotExist(err) {
+		return nil, err
 	}
-	if s.state.Firewall.CustomRules == nil {
-		s.state.Firewall.CustomRules = []FirewallRule{}
-	}
-	if s.state.Firewall.PortForwards == nil {
-		s.state.Firewall.PortForwards = []PortForward{}
-	}
-	if s.state.WireGuard.Peers == nil {
-		s.state.WireGuard.Peers = []WireGuardPeer{}
-	}
+	normalizeState(&s.state)
 	return s, nil
 }
 
@@ -215,15 +253,7 @@ func (s *Store) Update(fn func(*State) error) error {
 	if err := fn(&next); err != nil {
 		return err
 	}
-	if next.Firewall.CustomRules == nil {
-		next.Firewall.CustomRules = []FirewallRule{}
-	}
-	if next.Firewall.PortForwards == nil {
-		next.Firewall.PortForwards = []PortForward{}
-	}
-	if next.WireGuard.Peers == nil {
-		next.WireGuard.Peers = []WireGuardPeer{}
-	}
+	normalizeState(&next)
 	if err := AtomicWriteJSON(s.path, next, 0600); err != nil {
 		return err
 	}
@@ -243,27 +273,25 @@ func (s *Store) Reload() error {
 	} else if !os.IsNotExist(err) {
 		return err
 	}
-	if next.Firewall.CustomRules == nil {
-		next.Firewall.CustomRules = []FirewallRule{}
-	}
-	if next.Firewall.PortForwards == nil {
-		next.Firewall.PortForwards = []PortForward{}
-	}
-	if next.WireGuard.Peers == nil {
-		next.WireGuard.Peers = []WireGuardPeer{}
-	}
+	normalizeState(&next)
 	s.state = next
 	return nil
 }
 
-// AtomicWriteFile writes data to a temporary file in the same directory and renames it atomically.
+// AtomicWriteFile writes data to a unique temporary file in the same directory and renames it atomically.
 func AtomicWriteFile(path string, data []byte, perm os.FileMode) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0755); err != nil {
 		return err
 	}
-	tmp := path + ".tmp"
-	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, perm)
+	f, err := os.CreateTemp(dir, "."+filepath.Base(path)+".tmp-*")
 	if err != nil {
+		return err
+	}
+	tmp := f.Name()
+	if err := f.Chmod(perm); err != nil {
+		_ = f.Close()
+		_ = os.Remove(tmp)
 		return err
 	}
 	if _, err := f.Write(data); err != nil {
@@ -280,7 +308,11 @@ func AtomicWriteFile(path string, data []byte, perm os.FileMode) error {
 		_ = os.Remove(tmp)
 		return err
 	}
-	return os.Rename(tmp, path)
+	if err := os.Rename(tmp, path); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	return nil
 }
 
 func AtomicWriteJSON(path string, v any, perm os.FileMode) error {

@@ -1,6 +1,10 @@
 package api
 
 import (
+	"archive/tar"
+	"bytes"
+	"compress/gzip"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -14,6 +18,45 @@ import (
 	"github.com/yalcer/netbee/netbeed/internal/config"
 	"github.com/yalcer/netbee/netbeed/internal/sys"
 )
+
+const (
+	maxBackupUploadBytes       = 16 << 20 // 16 MB compressed max
+	maxBackupUncompressedBytes = 32 << 20 // 32 MB uncompressed max (gzip-bomb guard)
+	maxBackupEntries           = 256
+)
+
+var allowedBackupExactFiles = map[string]bool{
+	"etc/hostname":                  true,
+	"etc/hosts":                     true,
+	"etc/network/interfaces":        true,
+	"etc/nftables.conf":             true,
+	"etc/dhcpcd.conf":               true,
+	"etc/chrony.conf":               true,
+	"etc/radvd.conf":                true,
+	"etc/ppp/pap-secrets":           true,
+	"etc/ppp/chap-secrets":          true,
+	"etc/adguardhome/AdGuardHome.yaml": true,
+	"etc/default/dropbear":          true,
+	"root/.ssh/authorized_keys":     true,
+}
+
+var allowedBackupDirs = map[string]bool{
+	"etc":             true,
+	"etc/network":     true,
+	"etc/ppp":         true,
+	"etc/adguardhome": true,
+	"etc/default":     true,
+	"root":            true,
+	"root/.ssh":       true,
+}
+
+var allowedBackupTreePrefixes = []string{
+	"etc/nftables.d",
+	"etc/ppp/peers",
+	"etc/netbee",
+	"etc/wireguard",
+	"etc/dropbear",
+}
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -30,12 +73,20 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		Password string `json:"password"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
+		if errors.Is(err, errPayloadTooLarge) {
+			writeErr(w, http.StatusRequestEntityTooLarge, err.Error())
+			return
+		}
 		writeErr(w, http.StatusBadRequest, "invalid json body")
 		return
 	}
 	sess, err := s.Auth.Login(r, req.Username, req.Password)
 	if err != nil {
-		writeErr(w, http.StatusUnauthorized, err.Error())
+		status := http.StatusUnauthorized
+		if strings.Contains(err.Error(), "too many") {
+			status = http.StatusTooManyRequests
+		}
+		writeErr(w, status, err.Error())
 		return
 	}
 	http.SetCookie(w, &http.Cookie{
@@ -125,6 +176,9 @@ func (s *Server) handleSystemStream(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "streaming unsupported")
 		return
 	}
+	rc := http.NewResponseController(w)
+	_ = rc.SetWriteDeadline(time.Time{})
+
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
@@ -190,8 +244,12 @@ func (s *Server) handleSystemStream(w http.ResponseWriter, r *http.Request) {
 				"interfaces":     rates,
 			}
 			if b, err := sysMarshal(frame); err == nil {
-				_, _ = fmt.Fprintf(w, "data: %s\n\n", b)
+				_ = rc.SetWriteDeadline(time.Now().Add(10 * time.Second))
+				if _, wErr := fmt.Fprintf(w, "data: %s\n\n", b); wErr != nil {
+					return
+				}
 				flusher.Flush()
+				_ = rc.SetWriteDeadline(time.Time{})
 			}
 
 			prevCPU = curCPU
@@ -231,6 +289,20 @@ func (s *Server) handleServiceAction(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "output": strings.TrimSpace(res.Stdout)})
 }
 
+func renderHostsFile(lanIP, hostname string) string {
+	if lanIP == "" {
+		lanIP = "192.168.10.1"
+	}
+	if hostname == "" || !sys.ValidHostname(hostname) {
+		hostname = "netbee"
+	}
+	names := "netbee.lan netbee"
+	if !strings.EqualFold(hostname, "netbee") {
+		names = fmt.Sprintf("%s.lan %s netbee.lan netbee", hostname, hostname)
+	}
+	return fmt.Sprintf("127.0.0.1       localhost\n%s    %s\n::1             localhost ip6-localhost ip6-loopback\n", lanIP, names)
+}
+
 func (s *Server) handleSetHostname(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Hostname string `json:"hostname"`
@@ -243,6 +315,7 @@ func (s *Server) handleSetHostname(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	_ = config.AtomicWriteFile("/etc/hosts", []byte(renderHostsFile(s.Store.Get().LAN.IP, req.Hostname)), 0644)
 	_, _ = sys.Run(5*time.Second, "hostname", req.Hostname)
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "hostname": req.Hostname})
 }
@@ -316,53 +389,163 @@ func (s *Server) handleBackupDownload(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(data)
 }
 
-// ValidateBackupArchiveEntries rejects tar-slip paths (absolute paths, '..', or entries outside etc/).
+func isAllowedBackupEntry(raw string, isDir bool) error {
+	if raw == "" {
+		return errors.New("empty archive entry name")
+	}
+	trimmed := strings.TrimPrefix(raw, "./")
+	trimmed = strings.TrimSuffix(trimmed, "/")
+	if trimmed == "" || trimmed == "." {
+		if isDir {
+			return nil
+		}
+		return errors.New("invalid root archive entry")
+	}
+	if strings.HasPrefix(raw, "/") || strings.HasPrefix(trimmed, "/") || strings.Contains(raw, "..") || strings.Contains(raw, `\`) {
+		return fmt.Errorf("unsafe archive path rejected: %s", raw)
+	}
+	clean := filepath.Clean(trimmed)
+	if strings.HasPrefix(clean, "/") || clean == ".." || strings.HasPrefix(clean, "../") {
+		return fmt.Errorf("unsafe archive path rejected: %s", raw)
+	}
+
+	if isDir {
+		if allowedBackupDirs[clean] {
+			return nil
+		}
+		for _, prefix := range allowedBackupTreePrefixes {
+			if clean == prefix || strings.HasPrefix(clean, prefix+"/") {
+				return nil
+			}
+		}
+		return fmt.Errorf("disallowed backup directory rejected: %s", raw)
+	}
+
+	if allowedBackupExactFiles[clean] {
+		return nil
+	}
+	for _, prefix := range allowedBackupTreePrefixes {
+		if strings.HasPrefix(clean, prefix+"/") {
+			return nil
+		}
+	}
+	return fmt.Errorf("disallowed backup file path rejected: %s", raw)
+}
+
+// ValidateBackupArchiveEntries validates newline-separated relative paths against the strict NetBee backup allowlist.
 func ValidateBackupArchiveEntries(listing string) error {
-	for _, raw := range strings.Split(listing, "\n") {
-		entry := strings.TrimSpace(raw)
+	for _, line := range strings.Split(listing, "\n") {
+		entry := strings.TrimSpace(line)
 		if entry == "" {
 			continue
 		}
-		if strings.HasPrefix(entry, "/") || strings.Contains(entry, "..") {
-			return fmt.Errorf("unsafe archive path rejected: %s", entry)
-		}
-		clean := filepath.Clean(entry)
-		if clean != "etc" && !strings.HasPrefix(clean, "etc/") {
-			return fmt.Errorf("archive path outside /etc rejected: %s", entry)
+		isDir := strings.HasSuffix(entry, "/")
+		if err := isAllowedBackupEntry(entry, isDir); err != nil {
+			return err
 		}
 	}
 	return nil
 }
 
-func (s *Server) handleBackupRestore(w http.ResponseWriter, r *http.Request) {
-	defer r.Body.Close()
-	data, err := io.ReadAll(io.LimitReader(r.Body, 16<<20)) // 16 MB max
-	if err != nil || len(data) == 0 {
-		writeErr(w, http.StatusBadRequest, "empty or unreadable backup archive")
-		return
-	}
-	tmp := fmt.Sprintf("/tmp/netbee-restore-%d.tar.gz", time.Now().UnixNano())
-	defer os.Remove(tmp)
-	if err := os.WriteFile(tmp, data, 0600); err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	// Verify every tar entry before extracting to /
-	listRes, err := sys.Run(10*time.Second, "tar", "-tzf", tmp)
+// ValidateBackupTarGz inspects the .tar.gz archive in-memory using Go's stdlib compress/gzip + archive/tar,
+// blocking tar-slip, symlinks, hardlinks, device nodes, gzip decompression bombs, and /etc/shadow or hook overwrites.
+func ValidateBackupTarGz(data []byte) error {
+	gz, err := gzip.NewReader(bytes.NewReader(data))
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, "invalid tar.gz archive: "+err.Error())
+		return fmt.Errorf("invalid gzip archive: %w", err)
+	}
+	defer gz.Close()
+
+	tr := tar.NewReader(gz)
+	var totalBytes int64
+	entries := 0
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return fmt.Errorf("invalid tar header: %w", err)
+		}
+		entries++
+		if entries > maxBackupEntries {
+			return fmt.Errorf("backup archive contains too many entries (max %d)", maxBackupEntries)
+		}
+
+		switch hdr.Typeflag {
+		case tar.TypeDir:
+			if err := isAllowedBackupEntry(hdr.Name, true); err != nil {
+				return err
+			}
+		case tar.TypeReg, tar.TypeRegA:
+			if err := isAllowedBackupEntry(hdr.Name, false); err != nil {
+				return err
+			}
+			if hdr.Size < 0 || hdr.Size > 8<<20 {
+				return fmt.Errorf("archive file too large: %s", hdr.Name)
+			}
+			n, copyErr := io.Copy(io.Discard, io.LimitReader(tr, (maxBackupUncompressedBytes-totalBytes)+1))
+			if copyErr != nil {
+				return fmt.Errorf("corrupt archive stream in %s: %w", hdr.Name, copyErr)
+			}
+			totalBytes += n
+			if totalBytes > maxBackupUncompressedBytes {
+				return errors.New("backup archive exceeds maximum uncompressed size (32 MB)")
+			}
+		case tar.TypeXHeader, tar.TypeXGlobalHeader:
+			continue
+		default:
+			// Reject TypeSymlink, TypeLink, TypeChar, TypeBlock, TypeFifo
+			return fmt.Errorf("unsupported or unsafe tar entry type (%c) for %s", hdr.Typeflag, hdr.Name)
+		}
+	}
+	if entries == 0 {
+		return errors.New("backup archive contains no files")
+	}
+	return nil
+}
+
+func (s *Server) handleBackupRestore(w http.ResponseWriter, r *http.Request) {
+	data, err := readBoundedBody(r, maxBackupUploadBytes)
+	if err != nil {
+		if errors.Is(err, errPayloadTooLarge) {
+			writeErr(w, http.StatusRequestEntityTooLarge, "backup archive exceeds 16 MB limit")
+			return
+		}
+		writeErr(w, http.StatusBadRequest, "unreadable backup archive")
 		return
 	}
-	if err := ValidateBackupArchiveEntries(listRes.Stdout); err != nil {
+	if len(data) == 0 {
+		writeErr(w, http.StatusBadRequest, "empty backup archive")
+		return
+	}
+	if err := ValidateBackupTarGz(data); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
+
+	f, err := os.CreateTemp("/tmp", "netbee-restore-*.tar.gz")
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	tmp := f.Name()
+	defer os.Remove(tmp)
+	_ = f.Chmod(0600)
+	if _, err := f.Write(data); err != nil {
+		_ = f.Close()
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	_ = f.Close()
+
 	res, err := sys.Run(20*time.Second, "/usr/sbin/netbee-backup", "restore", tmp)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	_ = s.Store.Reload()
+	_ = s.Auth.Reload()
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "output": strings.TrimSpace(res.Stdout)})
 }
 
@@ -417,4 +600,3 @@ func (s *Server) handleKernelLogs(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"lines": out, "count": len(out)})
 }
-

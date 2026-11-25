@@ -2,6 +2,7 @@ package sys
 
 import (
 	"os"
+	"path/filepath"
 	"sync"
 	"time"
 )
@@ -112,6 +113,32 @@ func (rm *RollbackManager) Confirm() bool {
 	return true
 }
 
+func atomicRestoreFile(path string, data []byte, mode os.FileMode) {
+	if mode == 0 {
+		mode = 0644
+	}
+	dir := filepath.Dir(path)
+	_ = os.MkdirAll(dir, 0755)
+	f, err := os.CreateTemp(dir, "."+filepath.Base(path)+".rb-*")
+	if err != nil {
+		_ = os.WriteFile(path, data, mode)
+		_ = os.Chmod(path, mode)
+		return
+	}
+	tmp := f.Name()
+	_ = f.Chmod(mode)
+	_, wErr := f.Write(data)
+	_ = f.Sync()
+	cErr := f.Close()
+	if wErr != nil || cErr != nil {
+		_ = os.Remove(tmp)
+		return
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		_ = os.Remove(tmp)
+	}
+}
+
 func (rm *RollbackManager) RevertNow() bool {
 	rm.mu.Lock()
 	if !rm.active {
@@ -133,12 +160,7 @@ func (rm *RollbackManager) RevertNow() bool {
 		if !snap.exists {
 			_ = os.Remove(path)
 		} else {
-			mode := snap.mode
-			if mode == 0 {
-				mode = 0644
-			}
-			_ = os.WriteFile(path, snap.data, mode)
-			_ = os.Chmod(path, mode)
+			atomicRestoreFile(path, snap.data, snap.mode)
 		}
 	}
 	// Run revert hooks in reverse order (LIFO)
