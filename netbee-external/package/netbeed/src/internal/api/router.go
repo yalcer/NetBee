@@ -1,8 +1,10 @@
 package api
 
 import (
+	"crypto/hmac"
 	"encoding/json"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -77,6 +79,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/firewall/ruleset", s.requireAuth(s.handleFirewallRuleset))
 	mux.HandleFunc("GET /api/v1/firewall/config", s.requireAuth(s.handleGetFirewallConfig))
 	mux.HandleFunc("PUT /api/v1/firewall/config", s.requireAuth(s.handleSetFirewallConfig))
+	mux.HandleFunc("PATCH /api/v1/firewall/toggles", s.requireAuth(s.handlePatchFirewallToggles))
 	mux.HandleFunc("POST /api/v1/firewall/rules", s.requireAuth(s.handleAddFirewallRule))
 	mux.HandleFunc("DELETE /api/v1/firewall/rules/{id}", s.requireAuth(s.handleDelFirewallRule))
 	mux.HandleFunc("POST /api/v1/firewall/port-forwards", s.requireAuth(s.handleAddPortForward))
@@ -172,6 +175,17 @@ func (s *Server) originAllowed(origin string) bool {
 	return false
 }
 
+func (s *Server) RestoreRuntimeOnBoot() {
+	wg := s.Store.Get().WireGuard
+	if wg.Enabled && wg.PrivateKey != "" {
+		if err := applyWireGuard(wg); err != nil {
+			log.Printf("boot restore WireGuard failed: %v", err)
+		} else {
+			log.Printf("boot restore WireGuard (%s) active", wg.Interface)
+		}
+	}
+}
+
 func (s *Server) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		sess, ok := s.Auth.Authenticate(r)
@@ -179,11 +193,12 @@ func (s *Server) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 			writeErr(w, http.StatusUnauthorized, "authentication required")
 			return
 		}
-		// Enforce CSRF header for cookie-authenticated mutating requests
+		// Strictly enforce X-CSRF-Token on all cookie-authenticated mutating requests
 		if r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions {
 			if !strings.HasPrefix(r.Header.Get("Authorization"), "Bearer ") {
-				if hdr := r.Header.Get("X-CSRF-Token"); hdr != "" && hdr != sess.CSRFToken {
-					writeErr(w, http.StatusForbidden, "invalid CSRF token")
+				hdr := r.Header.Get("X-CSRF-Token")
+				if hdr == "" || !hmac.Equal([]byte(hdr), []byte(sess.CSRFToken)) {
+					writeErr(w, http.StatusForbidden, "missing or invalid CSRF token")
 					return
 				}
 			}
@@ -197,7 +212,8 @@ func (s *Server) handleStaticFrontend(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusNotFound, "endpoint not found")
 		return
 	}
-	indexPath := filepath.Join(s.Cfg.WebDir, "index.html")
+	baseDir := filepath.Clean(s.Cfg.WebDir)
+	indexPath := filepath.Join(baseDir, "index.html")
 	if _, err := os.Stat(indexPath); err != nil {
 		writeJSON(w, http.StatusOK, map[string]any{
 			"service": "netbeed",
@@ -211,10 +227,12 @@ func (s *Server) handleStaticFrontend(w http.ResponseWriter, r *http.Request) {
 	}
 
 	clean := filepath.Clean("/" + r.URL.Path)
-	target := filepath.Join(s.Cfg.WebDir, clean)
-	if info, err := os.Stat(target); err == nil && !info.IsDir() {
-		http.ServeFile(w, r, target)
-		return
+	target := filepath.Join(baseDir, clean)
+	if strings.HasPrefix(target, baseDir+string(os.PathSeparator)) {
+		if info, err := os.Stat(target); err == nil && !info.IsDir() {
+			http.ServeFile(w, r, target)
+			return
+		}
 	}
 	http.ServeFile(w, r, indexPath)
 }
@@ -241,3 +259,4 @@ func decodeJSON(r *http.Request, dst any) error {
 	dec := json.NewDecoder(lim)
 	return dec.Decode(dst)
 }
+

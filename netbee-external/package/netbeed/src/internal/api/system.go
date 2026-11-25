@@ -65,6 +65,8 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 		Value:    "",
 		Path:     "/",
 		HttpOnly: true,
+		Secure:   r.TLS != nil,
+		SameSite: http.SameSiteLaxMode,
 		MaxAge:   -1,
 	})
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
@@ -90,7 +92,8 @@ func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid json body")
 		return
 	}
-	if err := s.Auth.ChangePassword(req.CurrentPassword, req.NewPassword); err != nil {
+	sess, _ := s.Auth.Authenticate(r)
+	if err := s.Auth.ChangePassword(req.CurrentPassword, req.NewPassword, sess.Token); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -125,6 +128,8 @@ func (s *Server) handleSystemStream(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
+	_, _ = fmt.Fprint(w, ": connected\n\n")
+	flusher.Flush()
 
 	prevCPU := sys.ReadCPUTimes()
 	prevNet := sys.ReadAllNetCounters()
@@ -174,32 +179,26 @@ func (s *Server) handleSystemStream(w http.ResponseWriter, r *http.Request) {
 			}
 
 			ov := sys.ReadOverview()
-			payload := fmt.Sprintf(
-				`{"time":%q,"cpu_pct":%.1f,"mem_used_mb":%d,"mem_total_mb":%d,"load_avg":[%.2f,%.2f,%.2f],"uptime_seconds":%d,"cpu_temp_c":%v,"interfaces":%s}`,
-				now.Format(time.RFC3339), cpuPct, ov.MemUsedMB, ov.MemTotalMB,
-				ov.LoadAvg[0], ov.LoadAvg[1], ov.LoadAvg[2], ov.UptimeSec,
-				formatFloatPtr(ov.CPUTempC), mustJSON(rates),
-			)
-			_, _ = fmt.Fprintf(w, "data: %s\n\n", payload)
-			flusher.Flush()
+			frame := map[string]any{
+				"time":           now.Format(time.RFC3339),
+				"cpu_pct":        float64(int(cpuPct*10+0.5)) / 10.0,
+				"mem_used_mb":    ov.MemUsedMB,
+				"mem_total_mb":   ov.MemTotalMB,
+				"load_avg":       ov.LoadAvg,
+				"uptime_seconds": ov.UptimeSec,
+				"cpu_temp_c":     ov.CPUTempC,
+				"interfaces":     rates,
+			}
+			if b, err := sysMarshal(frame); err == nil {
+				_, _ = fmt.Fprintf(w, "data: %s\n\n", b)
+				flusher.Flush()
+			}
 
 			prevCPU = curCPU
 			prevNet = curNet
 			prevAt = now
 		}
 	}
-}
-
-func formatFloatPtr(f *float64) string {
-	if f == nil {
-		return "null"
-	}
-	return fmt.Sprintf("%.1f", *f)
-}
-
-func mustJSON(v any) string {
-	b, _ := sysMarshal(v)
-	return string(b)
 }
 
 func (s *Server) handleListServices(w http.ResponseWriter, r *http.Request) {
@@ -317,6 +316,24 @@ func (s *Server) handleBackupDownload(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(data)
 }
 
+// ValidateBackupArchiveEntries rejects tar-slip paths (absolute paths, '..', or entries outside etc/).
+func ValidateBackupArchiveEntries(listing string) error {
+	for _, raw := range strings.Split(listing, "\n") {
+		entry := strings.TrimSpace(raw)
+		if entry == "" {
+			continue
+		}
+		if strings.HasPrefix(entry, "/") || strings.Contains(entry, "..") {
+			return fmt.Errorf("unsafe archive path rejected: %s", entry)
+		}
+		clean := filepath.Clean(entry)
+		if clean != "etc" && !strings.HasPrefix(clean, "etc/") {
+			return fmt.Errorf("archive path outside /etc rejected: %s", entry)
+		}
+	}
+	return nil
+}
+
 func (s *Server) handleBackupRestore(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
 	data, err := io.ReadAll(io.LimitReader(r.Body, 16<<20)) // 16 MB max
@@ -330,11 +347,22 @@ func (s *Server) handleBackupRestore(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	// Verify every tar entry before extracting to /
+	listRes, err := sys.Run(10*time.Second, "tar", "-tzf", tmp)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid tar.gz archive: "+err.Error())
+		return
+	}
+	if err := ValidateBackupArchiveEntries(listRes.Stdout); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	res, err := sys.Run(20*time.Second, "/usr/sbin/netbee-backup", "restore", tmp)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	_ = s.Store.Reload()
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "output": strings.TrimSpace(res.Stdout)})
 }
 
@@ -348,16 +376,18 @@ func (s *Server) handleSystemLogs(w http.ResponseWriter, r *http.Request) {
 	filter := strings.ToLower(r.URL.Query().Get("filter"))
 	data, err := os.ReadFile("/var/log/messages")
 	if err != nil {
-		writeJSON(w, http.StatusOK, map[string]any{"lines": []string{}})
+		writeJSON(w, http.StatusOK, map[string]any{"lines": []string{}, "count": 0})
 		return
 	}
-	all := strings.Split(strings.TrimRight(string(data), "\n"), "\n")
-	var out []string
-	for _, line := range all {
-		if filter != "" && !strings.Contains(strings.ToLower(line), filter) {
-			continue
+	trimmed := strings.TrimRight(string(data), "\n")
+	out := []string{}
+	if trimmed != "" {
+		for _, line := range strings.Split(trimmed, "\n") {
+			if filter != "" && !strings.Contains(strings.ToLower(line), filter) {
+				continue
+			}
+			out = append(out, line)
 		}
-		out = append(out, line)
 	}
 	if len(out) > lines {
 		out = out[len(out)-lines:]
@@ -377,9 +407,14 @@ func (s *Server) handleKernelLogs(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	all := strings.Split(strings.TrimRight(res.Stdout, "\n"), "\n")
-	if len(all) > lines {
-		all = all[len(all)-lines:]
+	trimmed := strings.TrimRight(res.Stdout, "\n")
+	out := []string{}
+	if trimmed != "" {
+		out = strings.Split(trimmed, "\n")
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"lines": all, "count": len(all)})
+	if len(out) > lines {
+		out = out[len(out)-lines:]
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"lines": out, "count": len(out)})
 }
+

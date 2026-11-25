@@ -142,6 +142,14 @@ func clientIP(r *http.Request) string {
 
 func (m *Manager) checkRateLimitLocked(ip string) bool {
 	now := time.Now()
+	// Prevent unbounded map growth under scanning/long uptime
+	if len(m.rates) > 256 {
+		for k, v := range m.rates {
+			if now.Sub(v.windowAt) > 5*time.Minute {
+				delete(m.rates, k)
+			}
+		}
+	}
 	ent, ok := m.rates[ip]
 	if !ok || now.Sub(ent.windowAt) > time.Minute {
 		m.rates[ip] = rateEntry{attempts: 1, windowAt: now}
@@ -227,9 +235,12 @@ func (m *Manager) Logout(token string) {
 	m.mu.Unlock()
 }
 
-func (m *Manager) ChangePassword(currentPassword, newPassword string) error {
-	if len(newPassword) < 8 {
-		return errors.New("new password must be at least 8 characters")
+func (m *Manager) ChangePassword(currentPassword, newPassword, keepSessionToken string) error {
+	if len(newPassword) < 8 || len(newPassword) > 128 {
+		return errors.New("new password must be between 8 and 128 characters")
+	}
+	if strings.ContainsAny(newPassword, "\n\r\x00") {
+		return errors.New("new password contains forbidden control characters")
 	}
 	m.mu.RLock()
 	username := m.creds.Username
@@ -247,6 +258,12 @@ func (m *Manager) ChangePassword(currentPassword, newPassword string) error {
 	}
 	m.mu.Lock()
 	m.creds = next
+	// Invalidate all other active sessions on password change
+	for tok := range m.sessions {
+		if tok != keepSessionToken {
+			delete(m.sessions, tok)
+		}
+	}
 	m.mu.Unlock()
 	return nil
 }
@@ -279,3 +296,4 @@ func (m *Manager) Authenticate(r *http.Request) (Session, bool) {
 	}
 	return sess, true
 }
+
