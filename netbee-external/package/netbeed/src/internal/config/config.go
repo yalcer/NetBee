@@ -1,0 +1,259 @@
+package config
+
+import (
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"sync"
+)
+
+// RuntimeConfig holds daemon startup configuration from /etc/netbee/netbeed.json.
+type RuntimeConfig struct {
+	HTTPSAddr       string   `json:"https_addr"`
+	HTTPAddr        string   `json:"http_addr"`
+	TLSDIR          string   `json:"tls_dir"`
+	WebDir          string   `json:"web_dir"`
+	StatePath       string   `json:"state_path"`
+	AuthPath        string   `json:"auth_path"`
+	AdGuardURL      string   `json:"adguard_url"`
+	AdGuardUser     string   `json:"adguard_user"`
+	AdGuardPass     string   `json:"adguard_pass"`
+	RollbackSeconds int      `json:"rollback_seconds"`
+	CORSOrigins     []string `json:"cors_origins"`
+}
+
+func DefaultRuntimeConfig() RuntimeConfig {
+	return RuntimeConfig{
+		HTTPSAddr:       "192.168.10.1:443",
+		HTTPAddr:        "192.168.10.1:80",
+		TLSDIR:          "/etc/netbee/tls",
+		WebDir:          "/usr/share/netbee/web",
+		StatePath:       "/etc/netbee/state.json",
+		AuthPath:        "/etc/netbee/auth.json",
+		AdGuardURL:      "http://127.0.0.1:3000",
+		AdGuardUser:     "admin",
+		AdGuardPass:     "netbee",
+		RollbackSeconds: 60,
+		CORSOrigins:     []string{},
+	}
+}
+
+func LoadRuntimeConfig(path string) (RuntimeConfig, error) {
+	cfg := DefaultRuntimeConfig()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return cfg, nil
+		}
+		return cfg, err
+	}
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return cfg, err
+	}
+	if cfg.RollbackSeconds <= 0 {
+		cfg.RollbackSeconds = 60
+	}
+	return cfg, nil
+}
+
+// --- Persistent Router State (/etc/netbee/state.json) ---
+
+type FirewallRule struct {
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	Enabled  bool   `json:"enabled"`
+	Chain    string `json:"chain"`    // "input" or "forward"
+	Action   string `json:"action"`   // "accept", "drop", "reject"
+	Protocol string `json:"protocol"` // "tcp", "udp", "icmp", "any"
+	InIface  string `json:"in_iface,omitempty"`
+	OutIface string `json:"out_iface,omitempty"`
+	SrcAddr  string `json:"src_addr,omitempty"`
+	DstAddr  string `json:"dst_addr,omitempty"`
+	DstPort  string `json:"dst_port,omitempty"` // e.g. "443" or "8000-8100"
+	Log      bool   `json:"log"`
+}
+
+type PortForward struct {
+	ID         string `json:"id"`
+	Name       string `json:"name"`
+	Enabled    bool   `json:"enabled"`
+	Protocol   string `json:"protocol"` // "tcp", "udp", "both"
+	ExtPort    string `json:"ext_port"` // e.g. "443" or "8080-8090"
+	IntIP      string `json:"int_ip"`   // e.g. "192.168.10.50"
+	IntPort    int    `json:"int_port"` // e.g. 443
+	SourceCIDR string `json:"source_cidr,omitempty"`
+}
+
+type FirewallState struct {
+	TransparentDNS   bool           `json:"transparent_dns"`
+	ExposeWireGuard  bool           `json:"expose_wireguard"`
+	WireGuardPort    int            `json:"wireguard_port"`
+	FlowOffload      bool           `json:"flow_offload"`
+	CustomRules      []FirewallRule `json:"custom_rules"`
+	PortForwards     []PortForward  `json:"port_forwards"`
+}
+
+type WANState struct {
+	Mode          string `json:"mode"` // "dhcp", "pppoe", "ont_vlan"
+	Interface     string `json:"interface"`
+	VLANID        int    `json:"vlan_id"`
+	PPPoEUser     string `json:"pppoe_user"`
+	PPPoEPassword string `json:"pppoe_password,omitempty"`
+	MACClone      string `json:"mac_clone,omitempty"`
+	MTU           int    `json:"mtu"`
+	IPv6PD        bool   `json:"ipv6_pd"`
+}
+
+type LANState struct {
+	Interface string `json:"interface"`
+	IP        string `json:"ip"`
+	Netmask   string `json:"netmask"`
+}
+
+type WireGuardPeer struct {
+	ID           string `json:"id"`
+	Name         string `json:"name"`
+	PublicKey    string `json:"public_key"`
+	PresharedKey string `json:"preshared_key,omitempty"`
+	AllowedIPs   string `json:"allowed_ips"`
+	Enabled      bool   `json:"enabled"`
+}
+
+type WireGuardState struct {
+	Enabled    bool            `json:"enabled"`
+	Interface  string          `json:"interface"`
+	Address    string          `json:"address"` // e.g. "10.66.66.1/24"
+	ListenPort int             `json:"listen_port"`
+	PrivateKey string          `json:"private_key,omitempty"`
+	PublicKey  string          `json:"public_key,omitempty"`
+	Endpoint   string          `json:"endpoint,omitempty"` // public host/DDNS for client configs
+	DNS        string          `json:"dns"`                // e.g. "192.168.10.1"
+	Peers      []WireGuardPeer `json:"peers"`
+}
+
+type State struct {
+	WAN       WANState       `json:"wan"`
+	LAN       LANState       `json:"lan"`
+	Firewall  FirewallState  `json:"firewall"`
+	WireGuard WireGuardState `json:"wireguard"`
+}
+
+func DefaultState() State {
+	return State{
+		WAN: WANState{
+			Mode:      "dhcp",
+			Interface: "eth1",
+			VLANID:    35,
+			MTU:       1492,
+			IPv6PD:    false,
+		},
+		LAN: LANState{
+			Interface: "eth0",
+			IP:        "192.168.10.1",
+			Netmask:   "255.255.255.0",
+		},
+		Firewall: FirewallState{
+			TransparentDNS:  false,
+			ExposeWireGuard: false,
+			WireGuardPort:   51820,
+			FlowOffload:     true,
+			CustomRules:     []FirewallRule{},
+			PortForwards:    []PortForward{},
+		},
+		WireGuard: WireGuardState{
+			Enabled:    false,
+			Interface:  "wg0",
+			Address:    "10.66.66.1/24",
+			ListenPort: 51820,
+			DNS:        "192.168.10.1",
+			Peers:      []WireGuardPeer{},
+		},
+	}
+}
+
+type Store struct {
+	mu    sync.RWMutex
+	path  string
+	state State
+}
+
+func NewStore(path string) (*Store, error) {
+	s := &Store{path: path, state: DefaultState()}
+	if data, err := os.ReadFile(path); err == nil {
+		_ = json.Unmarshal(data, &s.state)
+	}
+	if s.state.Firewall.CustomRules == nil {
+		s.state.Firewall.CustomRules = []FirewallRule{}
+	}
+	if s.state.Firewall.PortForwards == nil {
+		s.state.Firewall.PortForwards = []PortForward{}
+	}
+	if s.state.WireGuard.Peers == nil {
+		s.state.WireGuard.Peers = []WireGuardPeer{}
+	}
+	return s, nil
+}
+
+func (s *Store) Get() State {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	// Deep copy slices so callers cannot mutate internal state without Lock/Update
+	cp := s.state
+	cp.Firewall.CustomRules = append([]FirewallRule{}, s.state.Firewall.CustomRules...)
+	cp.Firewall.PortForwards = append([]PortForward{}, s.state.Firewall.PortForwards...)
+	cp.WireGuard.Peers = append([]WireGuardPeer{}, s.state.WireGuard.Peers...)
+	return cp
+}
+
+func (s *Store) Update(fn func(*State) error) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	next := s.state
+	next.Firewall.CustomRules = append([]FirewallRule{}, s.state.Firewall.CustomRules...)
+	next.Firewall.PortForwards = append([]PortForward{}, s.state.Firewall.PortForwards...)
+	next.WireGuard.Peers = append([]WireGuardPeer{}, s.state.WireGuard.Peers...)
+	if err := fn(&next); err != nil {
+		return err
+	}
+	if err := AtomicWriteJSON(s.path, next, 0600); err != nil {
+		return err
+	}
+	s.state = next
+	return nil
+}
+
+// AtomicWriteFile writes data to a temporary file in the same directory and renames it atomically.
+func AtomicWriteFile(path string, data []byte, perm os.FileMode) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return err
+	}
+	tmp := path + ".tmp"
+	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, perm)
+	if err != nil {
+		return err
+	}
+	if _, err := f.Write(data); err != nil {
+		_ = f.Close()
+		_ = os.Remove(tmp)
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		_ = f.Close()
+		_ = os.Remove(tmp)
+		return err
+	}
+	if err := f.Close(); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	return os.Rename(tmp, path)
+}
+
+func AtomicWriteJSON(path string, v any, perm os.FileMode) error {
+	b, err := json.MarshalIndent(v, "", "  ")
+	if err != nil {
+		return err
+	}
+	b = append(b, '\n')
+	return AtomicWriteFile(path, b, perm)
+}

@@ -1,0 +1,9 @@
+config BR2_PACKAGE_NETBEED
+	bool "netbeed"
+	depends on BR2_PACKAGE_HOST_GO_TARGET_ARCH_SUPPORTS
+	help
+	  NetBee OS lightweight router & firewall management API daemon.
+	  Exposes a secure HTTPS REST/SSE API for all router subsystems
+	  (network, WAN/PPPoE/ONT, nftables, AdGuardHome, WireGuard, SQM,
+	  vnStat, NTP, IPv6, SSH, diagnostics, logs, and backup/restore)
+	  and serves a user-supplied static web frontend from /usr/share/netbee/web.

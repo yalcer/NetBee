@@ -1,0 +1,13 @@
+{
+  "https_addr": "192.168.10.1:443",
+  "http_addr": "192.168.10.1:80",
+  "tls_dir": "/etc/netbee/tls",
+  "web_dir": "/usr/share/netbee/web",
+  "state_path": "/etc/netbee/state.json",
+  "auth_path": "/etc/netbee/auth.json",
+  "adguard_url": "http://127.0.0.1:3000",
+  "adguard_user": "admin",
+  "adguard_pass": "netbee",
+  "rollback_seconds": 60,
+  "cors_origins": []
+}
