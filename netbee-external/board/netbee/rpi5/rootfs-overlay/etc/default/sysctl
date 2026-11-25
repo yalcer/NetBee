@@ -1,0 +1,2 @@
+# Ignore keys for modules not yet loaded at early boot
+SYSCTL_ARGS="-e"

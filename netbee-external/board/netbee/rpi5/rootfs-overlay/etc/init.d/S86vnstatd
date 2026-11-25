@@ -1,0 +1,56 @@
+#!/bin/sh
+
+DAEMON="vnstatd"
+PIDFILE="/var/run/$DAEMON.pid"
+DBDIR="/var/lib/vnstat"
+
+start() {
+	printf "Starting %s: " "$DAEMON"
+	mkdir -p "$DBDIR"
+	# Register primary LAN/WAN interfaces if database is fresh
+	for iface in eth0 eth1; do
+		if [ -d "/sys/class/net/$iface" ]; then
+			/usr/bin/vnstat --add -i "$iface" >/dev/null 2>&1 || true
+		fi
+	done
+	start-stop-daemon -S -q -p "$PIDFILE" \
+		-x /usr/sbin/vnstatd -- -d --pidfile "$PIDFILE"
+	status=$?
+	if [ "$status" -eq 0 ]; then
+		echo "OK"
+	else
+		echo "FAIL"
+	fi
+	return "$status"
+}
+
+stop() {
+	printf "Stopping %s: " "$DAEMON"
+	start-stop-daemon -K -q -p "$PIDFILE"
+	status=$?
+	if [ "$status" -eq 0 ]; then
+		rm -f "$PIDFILE"
+		echo "OK"
+	else
+		echo "FAIL"
+	fi
+	return "$status"
+}
+
+restart() {
+	stop
+	sleep 1
+	start
+}
+
+case "$1" in
+	start|stop|restart)
+		"$1"
+		;;
+	*)
+		echo "Usage: $0 {start|stop|restart}"
+		exit 1
+		;;
+esac
+
+exit $?
