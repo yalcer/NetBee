@@ -11,13 +11,15 @@ iface eth0 inet static
     address 192.168.10.1
     netmask 255.255.255.0
 
-# WAN Interface (DHCP by default)
-# To switch to PPPoE, comment 'iface eth1 inet dhcp' and uncomment the manual+pppd block below.
+# WAN Interface (Link up only; IPv4 DHCP & IPv6-PD are managed solely by dhcpcd)
 allow-hotplug eth1
 auto eth1
-iface eth1 inet dhcp
+iface eth1 inet manual
+    up ip link set eth1 up
+    down ip link set eth1 down
 
 # --- PPPoE WAN Example (Bridge Modem) ---
+# (Also add 'denyinterfaces eth1' to /etc/dhcpcd.conf when using PPPoE)
 # auto eth1
 # iface eth1 inet manual
 #     up ip link set eth1 up
@@ -33,4 +35,3 @@ iface eth1 inet dhcp
 #     up pppd call wan-pppoe
 #     down killall pppd || true
 #     down ip link del eth1.35 || true
-
