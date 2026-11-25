@@ -23,6 +23,7 @@ etc/adguardhome/AdGuardHome.yaml
 etc/dropbear
 etc/default/dropbear
 root/.ssh/authorized_keys
+home/netbee/.ssh/authorized_keys
 "
 
 usage() {
@@ -56,8 +57,21 @@ case "$cmd" in
 			exit 1
 		fi
 		tar -xzf "$IN" --no-same-owner --no-same-permissions -C /
-		chmod 0700 /etc/netbee/tls /etc/wireguard /root/.ssh 2>/dev/null || true
-		chmod 0600 /etc/ppp/pap-secrets /etc/ppp/chap-secrets /etc/netbee/state.json /etc/netbee/auth.json /etc/netbee/netbeed.json /etc/netbee/tls/server.key /etc/wireguard/wg0.conf /root/.ssh/authorized_keys 2>/dev/null || true
+		chmod 0700 /etc/netbee/tls /etc/wireguard /root/.ssh /home/netbee/.ssh 2>/dev/null || true
+		chmod 0600 \
+			/etc/ppp/pap-secrets \
+			/etc/ppp/chap-secrets \
+			/etc/netbee/state.json \
+			/etc/netbee/auth.json \
+			/etc/netbee/netbeed.json \
+			/etc/netbee/tls/server.key \
+			/etc/wireguard/wg0.conf \
+			/root/.ssh/authorized_keys \
+			/home/netbee/.ssh/authorized_keys 2>/dev/null || true
+		if grep -q '^netbee:' /etc/passwd 2>/dev/null && [ -d /home/netbee ]; then
+			nb_ug="$(awk -F: '$1=="netbee"{printf "%s:%s", $3, $4; exit}' /etc/passwd)"
+			[ -n "$nb_ug" ] && chown -R "$nb_ug" /home/netbee/.ssh 2>/dev/null || true
+		fi
 		echo "Backup restored from: $IN"
 		echo "Reboot ('reboot') or restart affected services to apply all changes."
 		;;
@@ -65,4 +79,3 @@ case "$cmd" in
 		usage
 		;;
 esac
-

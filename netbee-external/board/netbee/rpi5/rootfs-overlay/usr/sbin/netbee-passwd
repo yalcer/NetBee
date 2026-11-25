@@ -1,0 +1,142 @@
+#!/bin/sh
+# NetBee OS - Unified Password & Account Recovery Utility
+# Updates Web API (netbeed) and/or OS accounts (root, netbee) atomically.
+
+set -eu
+
+usage() {
+	cat <<EOF
+Usage:
+  netbee-passwd [--target all|web|os|root|netbee] [--stdin]
+
+Options:
+  --target <scope>   Which credentials to update (default: all)
+                       all    : Web API (admin) + OS 'root' + OS 'netbee'
+                       web    : Web API (/etc/netbee/auth.json) only
+                       os     : OS 'root' and 'netbee' accounts
+                       root   : OS 'root' account only
+                       netbee : OS 'netbee' account only
+  --stdin            Read the new password from standard input (single line)
+  -h, --help         Show this help message
+EOF
+}
+
+TARGET="all"
+FROM_STDIN=0
+
+while [ "$#" -gt 0 ]; do
+	case "$1" in
+		--target)
+			[ "$#" -ge 2 ] || { usage >&2; exit 1; }
+			TARGET="$2"
+			shift 2
+			;;
+		--stdin)
+			FROM_STDIN=1
+			shift
+			;;
+		-h|--help)
+			usage
+			exit 0
+			;;
+		*)
+			echo "Error: Unknown argument '$1'" >&2
+			usage >&2
+			exit 1
+			;;
+	esac
+done
+
+case "$TARGET" in
+	all|web|os|root|netbee) ;;
+	*)
+		echo "Error: Invalid --target '$TARGET' (expected all|web|os|root|netbee)" >&2
+		exit 1
+		;;
+esac
+
+if [ "$(id -u)" -ne 0 ]; then
+	echo "Error: netbee-passwd must be run as root (use 'su -')." >&2
+	exit 1
+fi
+
+read_secret() {
+	prompt="$1"
+	printf "%s" "$prompt" >&2
+	if [ -t 0 ]; then
+		stty -echo 2>/dev/null || true
+		IFS= read -r val || val=""
+		stty echo 2>/dev/null || true
+		printf "\n" >&2
+	else
+		IFS= read -r val || val=""
+	fi
+	printf "%s" "$val"
+}
+
+if [ "$FROM_STDIN" -eq 1 ]; then
+	IFS= read -r NEW_PASS || true
+else
+	NEW_PASS="$(read_secret "New password (min 8 chars): ")"
+	CONFIRM_PASS="$(read_secret "Confirm new password      : ")"
+	if [ "$NEW_PASS" != "$CONFIRM_PASS" ]; then
+		echo "Error: Passwords do not match." >&2
+		exit 1
+	fi
+	unset CONFIRM_PASS
+fi
+
+PASS_LEN="${#NEW_PASS}"
+if [ "$PASS_LEN" -lt 8 ] || [ "$PASS_LEN" -gt 128 ]; then
+	echo "Error: Password must be between 8 and 128 characters." >&2
+	exit 1
+fi
+
+set_os_password() {
+	acct="$1"
+	if ! grep -q "^${acct}:" /etc/passwd 2>/dev/null; then
+		return 0
+	fi
+	if command -v chpasswd >/dev/null 2>&1; then
+		printf '%s:%s\n' "$acct" "$NEW_PASS" | chpasswd
+	elif command -v mkpasswd >/dev/null 2>&1; then
+		hash="$(mkpasswd -m sha-512 "$NEW_PASS")"
+		tmp="/etc/shadow.netbee.$$"
+		umask 077
+		awk -F: -v u="$acct" -v h="$hash" 'BEGIN{OFS=":"} $1==u{$2=h; $3=int(systime()/86400)} {print}' /etc/shadow > "$tmp"
+		chmod 0600 "$tmp"
+		mv -f "$tmp" /etc/shadow
+	else
+		echo "Error: Neither chpasswd nor mkpasswd is available." >&2
+		exit 1
+	fi
+	echo "Updated OS password for '${acct}'."
+}
+
+if [ "$TARGET" = "all" ] || [ "$TARGET" = "web" ]; then
+	if [ -x /usr/bin/netbeed ]; then
+		printf '%s\n' "$NEW_PASS" | /usr/bin/netbeed -config /etc/netbee/netbeed.json -set-password
+		if pid="$(pidof netbeed 2>/dev/null)"; then
+			# shellcheck disable=SC2086
+			kill -HUP $pid 2>/dev/null || true
+		fi
+		echo "Updated Web API (netbeed) administrator password."
+	else
+		echo "Warning: /usr/bin/netbeed not found; skipped Web API password." >&2
+	fi
+fi
+
+case "$TARGET" in
+	all|os)
+		set_os_password root
+		set_os_password netbee
+		;;
+	root)
+		set_os_password root
+		;;
+	netbee)
+		set_os_password netbee
+		;;
+esac
+
+unset NEW_PASS

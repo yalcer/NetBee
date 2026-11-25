@@ -1,0 +1,177 @@
+#!/bin/sh
+# NetBee OS - Local Administrator Account & SSH Key Management Utility
+set -eu
+
+usage() {
+	cat <<EOF
+Usage:
+  netbee-user list                          - List interactive OS accounts & SSH key counts
+  netbee-user key-list [netbee|root]        - Show SSH authorized_keys for an account
+  netbee-user key-add <netbee|root> "<key>" - Add an SSH public key for an account
+  netbee-user key-del <netbee|root> <index> - Delete SSH key by 1-based line index
+  netbee-user key-clear <netbee|root>       - Clear all SSH keys for an account
+EOF
+	exit 1
+}
+
+resolve_home() {
+	acct="$1"
+	awk -F: -v u="$acct" '$1==u {print $6; exit}' /etc/passwd
+}
+
+resolve_uid_gid() {
+	acct="$1"
+	awk -F: -v u="$acct" '$1==u {printf "%s:%s", $3, $4; exit}' /etc/passwd
+}
+
+check_acct() {
+	acct="$1"
+	case "$acct" in
+		root|netbee) ;;
+		*)
+			echo "Error: Unsupported interactive account '$acct' (expected 'netbee' or 'root')." >&2
+			exit 1
+			;;
+	esac
+	if ! grep -q "^${acct}:" /etc/passwd 2>/dev/null; then
+		echo "Error: Account '$acct' does not exist in /etc/passwd." >&2
+		exit 1
+	fi
+}
+
+require_write_perm() {
+	acct="$1"
+	cur_uid="$(id -u)"
+	if [ "$cur_uid" -ne 0 ] && [ "$(id -un)" != "$acct" ]; then
+		echo "Error: Root privileges required to modify '$acct' (run 'su -')." >&2
+		exit 1
+	fi
+}
+
+valid_pubkey() {
+	k="$1"
+	case "$k" in
+		"ssh-ed25519 "*|"ssh-rsa "*|"ecdsa-sha2-nistp256 "*|"ecdsa-sha2-nistp384 "*|"ecdsa-sha2-nistp521 "*|"sk-ssh-ed25519@openssh.com "*|"sk-ecdsa-sha2-nistp256@openssh.com "*)
+			set -- $k
+			[ "$#" -ge 2 ] && [ "${#2}" -ge 32 ]
+			return $?
+			;;
+		*)
+			return 1
+			;;
+	esac
+}
+
+password_auth_disabled() {
+	[ -r /etc/default/dropbear ] || return 1
+	grep -v '^[[:space:]]*#' /etc/default/dropbear 2>/dev/null | grep -Eq '(^|[[:space:]"])-(s|sg|gs)([[:space:]"]|$)'
+}
+
+cmd="${1:-list}"
+case "$cmd" in
+	list)
+		printf "%-12s %-6s %-6s %-18s %-12s %-8s %s\n" "USER" "UID" "GID" "HOME" "SHELL" "SSH_KEYS" "GROUPS"
+		printf "%-12s %-6s %-6s %-18s %-12s %-8s %s\n" "----" "---" "---" "----" "-----" "--------" "------"
+		while IFS=: read -r name _ uid gid _ home shell; do
+			[ -n "$name" ] || continue
+			if [ "$uid" -eq 0 ] || { [ "$uid" -ge 1000 ] && [ "$uid" -lt 65534 ]; }; then
+				ak="${home}/.ssh/authorized_keys"
+				if [ -r "$ak" ]; then
+					kcnt="$(grep -cve '^[[:space:]]*\(#.*\)\?$' "$ak" 2>/dev/null || echo 0)"
+				elif [ -e "$ak" ]; then
+					kcnt="locked"
+				else
+					kcnt="0"
+				fi
+				grps="$(awk -F: -v u="$name" -v g="$gid" '$3==g || $4 ~ "(^|,)"u"(,|$)" {printf "%s,", $1}' /etc/group | sed 's/,$//')"
+				printf "%-12s %-6s %-6s %-18s %-12s %-8s %s\n" "$name" "$uid" "$gid" "$home" "$shell" "$kcnt" "$grps"
+			fi
+		done </etc/passwd
+		;;
+	key-list)
+		default_acct="$(id -un)"
+		[ "$default_acct" != "root" ] && default_acct="netbee"
+		acct="${2:-$default_acct}"
+		check_acct "$acct"
+		require_write_perm "$acct"
+		ak="$(resolve_home "$acct")/.ssh/authorized_keys"
+		if [ ! -f "$ak" ]; then
+			echo "No SSH public keys configured for '$acct'."
+			exit 0
+		fi
+		awk 'NF && $1 !~ /^#/ {i++; printf "%d: %s\n", i, $0}' "$ak"
+		;;
+	key-add)
+		[ "$#" -ge 3 ] || usage
+		acct="$2"
+		key="$3"
+		check_acct "$acct"
+		require_write_perm "$acct"
+		if ! valid_pubkey "$key"; then
+			echo "Error: Invalid OpenSSH public key format." >&2
+			exit 1
+		fi
+		home_dir="$(resolve_home "$acct")"
+		ug="$(resolve_uid_gid "$acct")"
+		ssh_dir="${home_dir}/.ssh"
+		ak="${ssh_dir}/authorized_keys"
+		mkdir -p "$ssh_dir"
+		chmod 0700 "$ssh_dir"
+		touch "$ak"
+		chmod 0600 "$ak"
+		key_blob="$(printf '%s\n' "$key" | awk '{print $1" "$2}')"
+		if awk '{print $1" "$2}' "$ak" 2>/dev/null | grep -Fqx "$key_blob"; then
+			echo "SSH public key already exists for '$acct'."
+			exit 0
+		fi
+		printf '%s\n' "$key" >> "$ak"
+		[ "$(id -u)" -eq 0 ] && chown -R "$ug" "$ssh_dir"
+		echo "Added SSH public key for '$acct'."
+		;;
+	key-del)
+		[ "$#" -ge 3 ] || usage
+		acct="$2"
+		idx="$3"
+		check_acct "$acct"
+		require_write_perm "$acct"
+		case "$idx" in
+			*[!0-9]*|"") echo "Error: Key index must be a positive integer." >&2; exit 1 ;;
+		esac
+		home_dir="$(resolve_home "$acct")"
+		ug="$(resolve_uid_gid "$acct")"
+		ak="${home_dir}/.ssh/authorized_keys"
+		[ -f "$ak" ] || { echo "Error: No authorized_keys file for '$acct'." >&2; exit 1; }
+		total="$(awk 'NF && $1 !~ /^#/ {c++} END{print c+0}' "$ak")"
+		if [ "$idx" -lt 1 ] || [ "$idx" -gt "$total" ]; then
+			echo "Error: Key index out of range (1..${total})." >&2
+			exit 1
+		fi
+		if [ "$total" -eq 1 ] && password_auth_disabled; then
+			echo "Error: Cannot delete the last key while SSH password authentication (-s) is disabled." >&2
+			exit 1
+		fi
+		tmp="${ak}.tmp.$$"
+		umask 077
+		awk -v target="$idx" 'NF && $1 !~ /^#/ {i++; if (i==target) next} {print}' "$ak" > "$tmp"
+		chmod 0600 "$tmp"
+		[ "$(id -u)" -eq 0 ] && chown "$ug" "$tmp"
+		mv -f "$tmp" "$ak"
+		echo "Removed SSH key #${idx} for '$acct'."
+		;;
+	key-clear)
+		[ "$#" -ge 2 ] || usage
+		acct="$2"
+		check_acct "$acct"
+		require_write_perm "$acct"
+		if password_auth_disabled; then
+			echo "Error: Cannot clear SSH keys while SSH password authentication (-s) is disabled." >&2
+			exit 1
+		fi
+		ak="$(resolve_home "$acct")/.ssh/authorized_keys"
+		rm -f "$ak"
+		echo "Cleared SSH authorized_keys for '$acct'."
+		;;
+	*)
+		usage
+		;;
+esac

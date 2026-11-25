@@ -1,0 +1,122 @@
+#!/bin/sh
+# NetBee OS - Unified Router Operator CLI
+set -eu
+
+usage() {
+	cat <<EOF
+NetBee OS Router CLI (netbee-cli)
+
+Read / Diagnostics Commands (available to 'netbee' and 'root'):
+  status                        Show hardware, interface, route & service summary
+  interfaces                    Show detailed IP addresses & link statistics
+  routes                        Show IPv4 & IPv6 routing tables
+  firewall                      Display active nftables ruleset (requires root)
+  conntrack                     Display active NAT connection tracking entries (requires root)
+  leases                        Display AdGuardHome DHCP leases
+  services                      List status of all router daemons
+  logs [lines]                  Show recent system syslog lines (default: 50)
+  users                         List interactive OS accounts & SSH key counts
+  version                       Show NetBee OS release metadata
+
+Administration Commands (require 'root' — run 'su -'):
+  passwd [args...]              Update Web UI & OS ('root'/'netbee') passwords
+  ssh-key <add|del|list|clear>  Manage SSH public keys (via netbee-user)
+  sqm <start|stop|status>       Control CAKE Smart Queue Management
+  backup [out.tar.gz]           Create encrypted/0600 configuration archive
+  restore <in.tar.gz>           Restore configuration archive
+  factory-reset [--yes]         Reset router configuration to factory defaults
+EOF
+}
+
+need_root() {
+	if [ "$(id -u)" -ne 0 ]; then
+		echo "Error: '$1' requires root privileges. Run 'su -' first." >&2
+		exit 1
+	fi
+}
+
+sub="${1:-help}"
+[ "$#" -gt 0 ] && shift
+
+case "$sub" in
+	status)
+		exec /usr/sbin/netbee-status "$@"
+		;;
+	interfaces|ifaces)
+		ip -s addr show
+		;;
+	routes)
+		echo "--- IPv4 Routes ---"
+		ip -4 route show
+		echo ""
+		echo "--- IPv6 Routes ---"
+		ip -6 route show
+		;;
+	firewall|fw)
+		need_root "firewall"
+		exec /usr/sbin/nft list ruleset
+		;;
+	conntrack)
+		need_root "conntrack"
+		/usr/sbin/conntrack -L 2>/dev/null | head -n 100
+		;;
+	leases)
+		if [ -r /var/lib/adguardhome/data/leases.json ]; then
+			cat /var/lib/adguardhome/data/leases.json
+			echo ""
+		else
+			echo "No DHCP lease database found (or permission denied; try 'su -')."
+		fi
+		;;
+	services)
+		for s in /etc/init.d/S*; do
+			[ -x "$s" ] || continue
+			printf "  %s\n" "$(basename "$s")"
+		done
+		echo ""
+		exec /usr/sbin/netbee-status
+		;;
+	logs)
+		lines="${1:-50}"
+		tail -n "$lines" /var/log/messages 2>/dev/null || echo "No /var/log/messages available."
+		;;
+	users)
+		exec /usr/sbin/netbee-user list
+		;;
+	ssh-key)
+		subkey="${1:-list}"
+		[ "$#" -gt 0 ] && shift
+		exec /usr/sbin/netbee-user "key-${subkey}" "$@"
+		;;
+	passwd)
+		need_root "passwd"
+		exec /usr/sbin/netbee-passwd "$@"
+		;;
+	sqm)
+		need_root "sqm"
+		exec /usr/sbin/netbee-sqm "${1:-status}"
+		;;
+	backup)
+		need_root "backup"
+		exec /usr/sbin/netbee-backup create "$@"
+		;;
+	restore)
+		need_root "restore"
+		exec /usr/sbin/netbee-backup restore "$@"
+		;;
+	factory-reset)
+		need_root "factory-reset"
+		exec /usr/sbin/netbee-factory-reset "$@"
+		;;
+	version)
+		cat /etc/os-release 2>/dev/null || echo "NetBee OS"
+		;;
+	-h|--help|help)
+		usage
+		;;
+	*)
+		echo "Error: Unknown command '$sub'" >&2
+		usage >&2
+		exit 1
+		;;
+esac

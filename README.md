@@ -27,10 +27,10 @@ Minimal, hardened Buildroot-based firewall and router OS for **Raspberry Pi 5** 
 | **LAN (`eth0`)** | Static `192.168.10.1/24` (RPi 5 built-in Ethernet) |
 | **WAN (`eth1`)** | DHCP / IPv6-PD via `dhcpcd` (USB or PCIe NIC; PPPoE / ONT VLAN 35 ready) |
 | **DHCP Pool** | `192.168.10.100` – `192.168.10.200` (`AdGuardHome`) |
-| **SSH (`dropbear`)** | `ssh root@192.168.10.1` (default password: `netbee` — change immediately with `passwd`) |
+| **SSH (`dropbear`)** | `ssh netbee@192.168.10.1` or `ssh root@192.168.10.1` (SHA-512 default password: `netbee` — rotate via `netbee-passwd`; root SSH can be disabled with `-w`) |
 | **Web API / UI (`netbeed`)** | `https://192.168.10.1` (default: `admin` / `netbee`; static frontend dir: `/usr/share/netbee/web`, see [API.md](netbee-external/package/netbeed/API.md)) |
 | **AdGuardHome UI** | `http://192.168.10.1:3000` (LAN only; default: `admin` / `netbee`) |
-| **CLI Utilities** | `netbee-status`, `netbee-sqm`, `netbee-backup` |
+| **CLI Utilities** | `netbee-cli`, `netbee-status`, `netbee-passwd`, `netbee-user`, `netbee-sqm`, `netbee-backup`, `netbee-factory-reset` |
 
 ---
 
@@ -87,11 +87,15 @@ NetBee/
 └── netbee-external/                # BR2_EXTERNAL tree
     ├── configs/netbee_rpi5_defconfig
     ├── package/adguardhome/        # AdGuardHome v1.0.0 package, SHA256 hash & init script
+    ├── package/netbeed/            # Zero-dependency Go HTTPS/SSE management backend & API docs
     └── board/netbee/rpi5/
         ├── config_5.txt            # Headless RPi 5 firmware boot config
         ├── linux-netbee.fragment   # Router, nftables, WireGuard, SQM, NIC & VirtIO kernel options
-        ├── post-build.sh           # Script & secret file permissions
-        └── rootfs-overlay/         # Network, nftables, chrony, dhcpcd, radvd, SQM, watchdog & udev
+        ├── busybox-netbee.fragment # BusyBox applet customizations (chpasswd with SHA-512)
+        ├── users.table             # Pre-created OS users ('netbee' admin UID 1000 & 'iperf' UID 110)
+        ├── device_table.txt        # Strict fakeroot ownership & 0700/0600 directory/file modes
+        ├── post-build.sh           # OS identity stamp & script/secret permissions
+        └── rootfs-overlay/         # Network, nftables, chrony, dhcpcd, radvd, SQM, CLI tools & profiles
 ```
 
 ---

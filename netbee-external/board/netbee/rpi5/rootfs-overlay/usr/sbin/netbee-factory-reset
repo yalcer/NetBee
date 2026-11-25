@@ -1,0 +1,150 @@
+#!/bin/sh
+# NetBee OS - Safe Appliance Factory Reset Utility
+# Restores persistent router, firewall, VPN, SSH & Web API state to hardened defaults.
+
+set -eu
+
+CONFIRMED=0
+NO_REBOOT=0
+
+while [ "$#" -gt 0 ]; do
+	case "$1" in
+		--yes)
+			CONFIRMED=1
+			shift
+			;;
+		--no-reboot)
+			NO_REBOOT=1
+			shift
+			;;
+		-h|--help)
+			echo "Usage: netbee-factory-reset [--yes] [--no-reboot]"
+			exit 0
+			;;
+		*)
+			echo "Error: Unknown option '$1'" >&2
+			exit 1
+			;;
+	esac
+done
+
+if [ "$(id -u)" -ne 0 ]; then
+	echo "Error: netbee-factory-reset must be run as root (use 'su -')." >&2
+	exit 1
+fi
+
+if [ "$CONFIRMED" -ne 1 ]; then
+	echo "WARNING: This will erase all custom network, firewall, WireGuard, SSH & Web UI settings"
+	echo "         and restore NetBee OS factory defaults (LAN 192.168.10.1/24, password 'netbee')."
+	printf "Type 'RESET' to continue: "
+	IFS= read -r ans || ans=""
+	if [ "$ans" != "RESET" ]; then
+		echo "Aborted."
+		exit 1
+	fi
+fi
+
+echo "Stopping management & shaping services..."
+/etc/init.d/S90netbeed stop >/dev/null 2>&1 || true
+/etc/init.d/S45sqm stop >/dev/null 2>&1 || true
+ip link del wg0 >/dev/null 2>&1 || true
+
+echo "Removing custom runtime configuration files..."
+rm -f \
+	/etc/netbee/state.json \
+	/etc/netbee/auth.json \
+	/etc/netbee/tls/server.crt \
+	/etc/netbee/tls/server.key \
+	/etc/nftables.d/10-netbee-ui.nft \
+	/etc/radvd.conf \
+	/root/.ssh/authorized_keys \
+	/home/netbee/.ssh/authorized_keys
+rm -rf /etc/wireguard/*
+
+echo "Restoring hardened NetBee OS factory defaults..."
+printf "netbee\n" > /etc/hostname
+hostname netbee 2>/dev/null || true
+
+cat > /etc/hosts <<'EOF'
+127.0.0.1	localhost
+192.168.10.1	netbee.lan netbee
+::1		localhost ip6-localhost ip6-loopback
+EOF
+
+cat > /etc/network/interfaces <<'EOF'
+auto lo
+iface lo inet loopback
+
+# LAN Interface (Static Router Gateway)
+auto eth0
+iface eth0 inet static
+    address 192.168.10.1
+    netmask 255.255.255.0
+
+# WAN Interface (Managed dynamically by dhcpcd or pppd/ONT VLAN)
+auto eth1
+iface eth1 inet manual
+EOF
+
+cat > /etc/dhcpcd.conf <<'EOF'
+# NetBee OS - WAN DHCPv4 / DHCPv6-PD Client Configuration
+denyinterfaces eth0 lo wg* ifb* ppp*
+hostname
+clientid
+persistent
+option rapid_commit
+option interface_mtu
+require dhcp_server_identifier
+slaac private
+nohook lookup-hostname
+EOF
+
+cat > /etc/nftables.vars <<'EOF'
+define LAN_IF = "eth0"
+define WAN_IFS = { "eth1", "eth1.35", "ppp0" }
+define WG_IF = "wg0"
+EOF
+
+cat > /etc/nftables.d/00-custom.nft <<'EOF'
+# Custom nftables rules drop-in (included by /etc/nftables.conf)
+EOF
+
+cat > /etc/netbee/netif.env <<'EOF'
+LAN_IF="eth0"
+WAN_IF="eth1"
+WAN_MODE="dhcp"
+WG_IF="wg0"
+EOF
+
+cat > /etc/netbee/sqm.conf <<'EOF'
+ENABLED=0
+WAN_IF="eth1"
+DOWN_KBIT=0
+UP_KBIT=0
+OVERHEAD=44
+EOF
+
+cat > /etc/default/dropbear <<'EOF'
+# Bind Dropbear SSH strictly to LAN IP (accessible from LAN and WireGuard, never WAN)
+# Disconnect idle SSH sessions after 10 minutes (600s)
+DROPBEAR_ARGS="-p 192.168.10.1:22 -I 600"
+EOF
+
+cat > /etc/cron/crontabs/root <<'EOF'
+# Rotate RAM-backed logs hourly so /var/log tmpfs never fills
+0 * * * * /usr/sbin/logrotate /etc/logrotate.conf >/dev/null 2>&1
+EOF
+chmod 0600 /etc/cron/crontabs/root
+
+printf "netbee\n" | /usr/sbin/netbee-passwd --target os --stdin >/dev/null
+
+if [ "$NO_REBOOT" -eq 1 ]; then
+	/etc/init.d/S35nftables reload >/dev/null 2>&1 || true
+	/etc/init.d/S50dropbear restart >/dev/null 2>&1 || true
+	/etc/init.d/S90netbeed start >/dev/null 2>&1 || true
+	echo "Factory reset complete (--no-reboot)."
+else
+	echo "Factory reset complete. Rebooting now..."
+	sync
+	/sbin/reboot
+fi

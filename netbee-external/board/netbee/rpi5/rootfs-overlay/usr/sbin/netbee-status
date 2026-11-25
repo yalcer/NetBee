@@ -1,28 +1,61 @@
 #!/bin/sh
-# NetBee OS - Quick Router Status Utility
+# NetBee OS - Router & Hardware Status Summary Utility
+set -u
 
-echo "============================================"
-echo "           NetBee OS Status"
-echo "============================================"
-echo "Hostname : $(hostname)"
-echo "Uptime   : $(uptime)"
-if [ -r /sys/class/thermal/thermal_zone0/temp ]; then
-    TEMP=$(awk '{printf "%.1f C", $1/1000}' /sys/class/thermal/thermal_zone0/temp)
-    echo "CPU Temp : $TEMP"
+OS_NAME="NetBee OS"
+if [ -r /etc/os-release ]; then
+	OS_NAME="$(awk -F= '$1=="PRETTY_NAME"{gsub(/"/,"",$2); print $2}' /etc/os-release)"
 fi
+
+BOARD_MODEL="Unknown ARM64 Board"
+if [ -r /proc/device-tree/model ]; then
+	BOARD_MODEL="$(tr -d '\000' </proc/device-tree/model 2>/dev/null || echo "$BOARD_MODEL")"
+fi
+
+echo "============================================================"
+echo "                  ${OS_NAME}"
+echo "============================================================"
+echo "Board     : ${BOARD_MODEL}"
+echo "Hostname  : $(hostname)"
+echo "User      : $(id -un) (uid=$(id -u))"
+echo "Uptime    :$(uptime)"
+
+if [ -r /sys/class/thermal/thermal_zone0/temp ]; then
+	TEMP="$(awk '{printf "%.1f C", $1/1000}' /sys/class/thermal/thermal_zone0/temp 2>/dev/null)"
+	echo "CPU Temp  : ${TEMP:-N/A}"
+fi
+
+for fan in /sys/class/hwmon/hwmon*/fan1_input; do
+	if [ -r "$fan" ]; then
+		echo "Fan Speed : $(cat "$fan" 2>/dev/null) RPM"
+		break
+	fi
+done
+
+if [ -r /proc/meminfo ]; then
+	MEM_LINE="$(awk '/^MemTotal:/{t=$2} /^MemAvailable:/{a=$2} END{if(t>0) printf "%d / %d MiB (%.0f%% used)", (t-a)/1024, t/1024, ((t-a)*100)/t}' /proc/meminfo)"
+	echo "Memory    : ${MEM_LINE}"
+fi
+
+if [ -r /proc/sys/net/netfilter/nf_conntrack_count ] && [ -r /proc/sys/net/netfilter/nf_conntrack_max ]; then
+	echo "Conntrack : $(cat /proc/sys/net/netfilter/nf_conntrack_count) / $(cat /proc/sys/net/netfilter/nf_conntrack_max) sessions"
+fi
+
 echo ""
 echo "--- Network Interfaces ---"
 ip -brief addr show
+
 echo ""
 echo "--- Default Route ---"
 ip route show default
+
 echo ""
-echo "--- Services ---"
-for svc in netbeed AdGuardHome dropbear chronyd vnstatd radvd watchdog pppd; do
-    if pidof "$svc" >/dev/null 2>&1; then
-        echo "  [UP]   $svc"
-    else
-        echo "  [DOWN] $svc"
-    fi
+echo "--- Core Router Services ---"
+for svc in netbeed AdGuardHome dropbear chronyd dhcpcd vnstatd crond watchdog radvd pppd; do
+	if pidof "$svc" >/dev/null 2>&1; then
+		printf "  [UP]   %s\n" "$svc"
+	else
+		printf "  [DOWN] %s\n" "$svc"
+	fi
 done
-echo "============================================"
+echo "============================================================"
