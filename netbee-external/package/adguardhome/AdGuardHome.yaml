@@ -1,5 +1,5 @@
 http:
-  address: 192.168.10.1:3000
+  address: 0.0.0.0:3000
 users:
   - name: admin
     password: $2b$12$UiGQSiUDfSYIXgWeaPk2LuFqAf.LRqms6o9ojTaQkp5lDErMvSPly

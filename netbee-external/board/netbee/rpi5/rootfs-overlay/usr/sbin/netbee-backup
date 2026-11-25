@@ -8,6 +8,7 @@ etc/hostname
 etc/hosts
 etc/network/interfaces
 etc/nftables.conf
+etc/nftables.d
 etc/dhcpcd.conf
 etc/chrony.conf
 etc/radvd.conf
@@ -59,3 +60,4 @@ case "$cmd" in
 		usage
 		;;
 esac
+

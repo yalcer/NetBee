@@ -1,0 +1,3 @@
+# NetBee OS - Modular Custom Firewall Rules
+# Managed by future NetBee Web UI / API (netbeed) or manual admin overrides.
+# Files in /etc/nftables.d/*.nft are loaded automatically by /etc/nftables.conf.

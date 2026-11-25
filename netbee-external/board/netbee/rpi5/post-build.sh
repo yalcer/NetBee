@@ -2,6 +2,29 @@
 set -u
 set -e
 
+# Stamp NetBee OS identity into /usr/lib/os-release (read by CLI & future Web UI)
+cat > "${TARGET_DIR}/usr/lib/os-release" <<'EOF'
+NAME="NetBee OS"
+ID=netbee
+VERSION="0.1.0"
+VERSION_ID="0.1.0"
+PRETTY_NAME="NetBee OS 0.1.0 (Raspberry Pi 5)"
+HOME_URL="https://github.com/yalcer/NetBee"
+BOARD="rpi5"
+ARCH="aarch64"
+BUILDROOT_VERSION="2026.08.2"
+EOF
+
+# Ensure persistent state directories exist for Web UI / API, TLS, WireGuard & modular firewall
+for dir in \
+	"${TARGET_DIR}/etc/netbee/tls" \
+	"${TARGET_DIR}/etc/nftables.d" \
+	"${TARGET_DIR}/etc/wireguard" \
+	"${TARGET_DIR}/var/lib/netbee"; do
+	[ -e "$dir" ] || mkdir -p "$dir"
+done
+chmod 0700 "${TARGET_DIR}/etc/netbee/tls" "${TARGET_DIR}/etc/wireguard"
+
 # Ensure executable permissions on NetBee init, hook & CLI scripts
 for script in \
 	"${TARGET_DIR}/etc/init.d/S12firstboot-resize" \
