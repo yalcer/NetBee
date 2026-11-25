@@ -8,7 +8,9 @@ etc/hostname
 etc/hosts
 etc/network/interfaces
 etc/nftables.conf
+etc/nftables.vars
 etc/nftables.d
+etc/sysctl.d/99-netbee-router.conf
 etc/dhcpcd.conf
 etc/chrony.conf
 etc/radvd.conf

@@ -1,7 +1,13 @@
 #!/bin/sh
-# NetBee OS - Enable nftables software flow offload when eth0+eth1 exist and SQM is disabled
+# NetBee OS - Enable nftables software flow offload when LAN+WAN exist and SQM/PPPoE are inactive
 
 SQM_CONF="/etc/netbee/sqm.conf"
+NETIF_ENV="/etc/netbee/netif.env"
+
+LAN_IF="eth0"
+WAN_IF="eth1"
+WAN_MODE="dhcp"
+[ -r "$NETIF_ENV" ] && . "$NETIF_ENV"
 
 start() {
 	printf "Enabling nftables flow offload: "
@@ -13,16 +19,20 @@ start() {
 			return 0
 		fi
 	fi
-	if [ ! -d /sys/class/net/eth0 ] || [ ! -d /sys/class/net/eth1 ]; then
-		echo "SKIP (waiting for eth0+eth1)"
+	if [ "$WAN_MODE" = "pppoe" ] || [ "$WAN_MODE" = "ont_vlan" ]; then
+		echo "SKIP (WAN mode is $WAN_MODE)"
+		return 0
+	fi
+	if [ ! -d "/sys/class/net/$LAN_IF" ] || [ ! -d "/sys/class/net/$WAN_IF" ]; then
+		echo "SKIP (waiting for $LAN_IF+$WAN_IF)"
 		return 0
 	fi
 	if /usr/sbin/nft list flowtable inet netbee_fw fastpath >/dev/null 2>&1; then
 		echo "OK (already active)"
 		return 0
 	fi
-	/usr/sbin/nft -f - <<'EOF'
-add flowtable inet netbee_fw fastpath { hook ingress priority 0; devices = { eth0, eth1 }; }
+	/usr/sbin/nft -f - <<EOF
+add flowtable inet netbee_fw fastpath { hook ingress priority 0; devices = { $LAN_IF, $WAN_IF }; }
 insert rule inet netbee_fw forward ip protocol { tcp, udp } ct state established flow add @fastpath
 EOF
 	status=$?

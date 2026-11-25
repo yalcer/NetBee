@@ -1,19 +1,27 @@
 #!/bin/sh
-# NetBee OS - udev hotplug handler when eth1 (WAN) appears dynamically
+# NetBee OS - udev hotplug handler when configured WAN interface appears dynamically
+
+IFACE="${1:-eth1}"
+WAN_IF="eth1"
+[ -r /etc/netbee/netif.env ] && . /etc/netbee/netif.env
+
+[ "$IFACE" = "$WAN_IF" ] || exit 0
 
 (
 	sleep 2
-	[ -d /sys/class/net/eth1 ] || exit 0
+	[ -d "/sys/class/net/$WAN_IF" ] || exit 0
 
 	if pidof vnstatd >/dev/null 2>&1; then
-		/usr/bin/vnstat --add -i eth1 >/dev/null 2>&1 || true
+		/usr/bin/vnstat --add -i "$WAN_IF" >/dev/null 2>&1 || true
 	fi
 
 	if [ -r /etc/netbee/sqm.conf ]; then
 		ENABLED=0
-		WAN_IF="eth1"
+		SQM_WAN="eth1"
+		# Read WAN_IF from sqm.conf without clobbering netif WAN_IF check
 		. /etc/netbee/sqm.conf
-		if [ "$ENABLED" = "1" ] && [ "$WAN_IF" = "eth1" ]; then
+		SQM_WAN="${WAN_IF:-$IFACE}"
+		if [ "$ENABLED" = "1" ] && [ "$SQM_WAN" = "$IFACE" ]; then
 			/usr/sbin/netbee-sqm restart >/dev/null 2>&1 || true
 			exit 0
 		fi
