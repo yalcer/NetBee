@@ -63,13 +63,19 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/auth/me", s.requireAuth(s.handleMe))
 	mux.HandleFunc("POST /api/v1/auth/password", s.requireAuth(s.handleChangePassword))
 
-	// System, Telemetry, Logs, Rollback & Backup
+	// System, Hardware Telemetry, Sysctl, TLS, Logs, Rollback & Backup
 	mux.HandleFunc("GET /api/v1/system/overview", s.requireAuth(s.handleSystemOverview))
 	mux.HandleFunc("GET /api/v1/system/stream", s.requireAuth(s.handleSystemStream))
 	mux.HandleFunc("GET /api/v1/system/services", s.requireAuth(s.handleListServices))
 	mux.HandleFunc("POST /api/v1/system/services/{name}/{action}", s.requireAuth(s.handleServiceAction))
 	mux.HandleFunc("PUT /api/v1/system/hostname", s.requireAuth(s.handleSetHostname))
+	mux.HandleFunc("GET /api/v1/system/timezones", s.requireAuth(s.handleGetTimezones))
 	mux.HandleFunc("PUT /api/v1/system/timezone", s.requireAuth(s.handleSetTimezone))
+	mux.HandleFunc("GET /api/v1/system/sysctl", s.requireAuth(s.handleGetSysctl))
+	mux.HandleFunc("PUT /api/v1/system/sysctl", s.requireAuth(s.handleSetSysctl))
+	mux.HandleFunc("GET /api/v1/system/tls", s.requireAuth(s.handleGetTLS))
+	mux.HandleFunc("PUT /api/v1/system/tls", s.requireAuth(s.handleSetTLS))
+	mux.HandleFunc("DELETE /api/v1/system/tls", s.requireAuth(s.handleDeleteTLS))
 	mux.HandleFunc("POST /api/v1/system/reboot", s.requireAuth(s.handleReboot))
 	mux.HandleFunc("POST /api/v1/system/poweroff", s.requireAuth(s.handlePoweroff))
 	mux.HandleFunc("GET /api/v1/system/pending-commit", s.requireAuth(s.handlePendingCommit))
@@ -79,12 +85,15 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/system/restore", s.requireAuth(s.handleBackupRestore))
 	mux.HandleFunc("GET /api/v1/logs/system", s.requireAuth(s.handleSystemLogs))
 	mux.HandleFunc("GET /api/v1/logs/kernel", s.requireAuth(s.handleKernelLogs))
+	mux.HandleFunc("POST /api/v1/logs/rotate", s.requireAuth(s.handleLogsRotate))
+	mux.HandleFunc("POST /api/v1/logs/clear", s.requireAuth(s.handleLogsClear))
 
-	// Network: Interfaces, Routes, Neighbors, LAN & WAN (DHCP/PPPoE/ONT VLAN/IPv6-PD)
+	// Network: Interfaces, Persisted Static Routes, Neighbors, LAN & WAN (DHCP/PPPoE/ONT VLAN/IPv6-PD)
 	mux.HandleFunc("GET /api/v1/network/interfaces", s.requireAuth(s.handleInterfaces))
 	mux.HandleFunc("GET /api/v1/network/routes", s.requireAuth(s.handleRoutes))
 	mux.HandleFunc("POST /api/v1/network/routes", s.requireAuth(s.handleAddRoute))
 	mux.HandleFunc("DELETE /api/v1/network/routes", s.requireAuth(s.handleDelRoute))
+	mux.HandleFunc("DELETE /api/v1/network/routes/{id}", s.requireAuth(s.handleDelRouteByID))
 	mux.HandleFunc("GET /api/v1/network/neighbors", s.requireAuth(s.handleNeighbors))
 	mux.HandleFunc("GET /api/v1/network/wan", s.requireAuth(s.handleGetWAN))
 	mux.HandleFunc("PUT /api/v1/network/wan", s.requireAuth(s.handleSetWAN))
@@ -92,25 +101,40 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/network/lan", s.requireAuth(s.handleGetLAN))
 	mux.HandleFunc("PUT /api/v1/network/lan", s.requireAuth(s.handleSetLAN))
 
-	// Firewall (nftables), Port Forwards (DNAT), Flow Offload & Conntrack
+	// Firewall (nftables), Rules/Port-Forwards CRUD, Raw Custom .nft, Flow Offload & Conntrack
 	mux.HandleFunc("GET /api/v1/firewall/ruleset", s.requireAuth(s.handleFirewallRuleset))
 	mux.HandleFunc("GET /api/v1/firewall/config", s.requireAuth(s.handleGetFirewallConfig))
 	mux.HandleFunc("PUT /api/v1/firewall/config", s.requireAuth(s.handleSetFirewallConfig))
 	mux.HandleFunc("PATCH /api/v1/firewall/toggles", s.requireAuth(s.handlePatchFirewallToggles))
 	mux.HandleFunc("POST /api/v1/firewall/rules", s.requireAuth(s.handleAddFirewallRule))
+	mux.HandleFunc("PUT /api/v1/firewall/rules/{id}", s.requireAuth(s.handleUpdateFirewallRule))
 	mux.HandleFunc("DELETE /api/v1/firewall/rules/{id}", s.requireAuth(s.handleDelFirewallRule))
 	mux.HandleFunc("POST /api/v1/firewall/port-forwards", s.requireAuth(s.handleAddPortForward))
+	mux.HandleFunc("PUT /api/v1/firewall/port-forwards/{id}", s.requireAuth(s.handleUpdatePortForward))
 	mux.HandleFunc("DELETE /api/v1/firewall/port-forwards/{id}", s.requireAuth(s.handleDelPortForward))
+	mux.HandleFunc("GET /api/v1/firewall/raw", s.requireAuth(s.handleGetFirewallRaw))
+	mux.HandleFunc("PUT /api/v1/firewall/raw", s.requireAuth(s.handleSetFirewallRaw))
 	mux.HandleFunc("PUT /api/v1/firewall/offload", s.requireAuth(s.handleSetFlowOffload))
 	mux.HandleFunc("POST /api/v1/firewall/reload", s.requireAuth(s.handleReloadFirewall))
 	mux.HandleFunc("GET /api/v1/firewall/conntrack", s.requireAuth(s.handleGetConntrack))
 	mux.HandleFunc("DELETE /api/v1/firewall/conntrack", s.requireAuth(s.handleFlushConntrack))
 
-	// DNS & DHCP (AdGuardHome integration + full transparent proxy)
+	// DNS & DHCP (AdGuardHome full integration + transparent proxy)
 	mux.HandleFunc("GET /api/v1/dns/status", s.requireAuth(s.handleDNSStatus))
+	mux.HandleFunc("GET /api/v1/dns/config", s.requireAuth(s.handleDNSGetConfig))
+	mux.HandleFunc("PUT /api/v1/dns/config", s.requireAuth(s.handleDNSSetConfig))
 	mux.HandleFunc("GET /api/v1/dns/stats", s.requireAuth(s.handleDNSStats))
 	mux.HandleFunc("GET /api/v1/dns/querylog", s.requireAuth(s.handleDNSQueryLog))
 	mux.HandleFunc("GET /api/v1/dns/filters", s.requireAuth(s.handleDNSFilters))
+	mux.HandleFunc("POST /api/v1/dns/filters", s.requireAuth(s.handleDNSFilterAdd))
+	mux.HandleFunc("PUT /api/v1/dns/filters", s.requireAuth(s.handleDNSFilterSet))
+	mux.HandleFunc("DELETE /api/v1/dns/filters", s.requireAuth(s.handleDNSFilterDel))
+	mux.HandleFunc("POST /api/v1/dns/filters/refresh", s.requireAuth(s.handleDNSFiltersRefresh))
+	mux.HandleFunc("PUT /api/v1/dns/rules", s.requireAuth(s.handleDNSSetUserRules))
+	mux.HandleFunc("GET /api/v1/dns/blocked-services", s.requireAuth(s.handleDNSBlockedServicesGet))
+	mux.HandleFunc("GET /api/v1/dns/blocked-services/all", s.requireAuth(s.handleDNSBlockedServicesAll))
+	mux.HandleFunc("PUT /api/v1/dns/blocked-services", s.requireAuth(s.handleDNSBlockedServicesSet))
+	mux.HandleFunc("POST /api/v1/dns/cache/clear", s.requireAuth(s.handleDNSCacheClear))
 	mux.HandleFunc("POST /api/v1/dns/protection", s.requireAuth(s.handleDNSProtection))
 	mux.HandleFunc("GET /api/v1/dns/rewrites", s.requireAuth(s.handleDNSRewritesList))
 	mux.HandleFunc("POST /api/v1/dns/rewrites", s.requireAuth(s.handleDNSRewriteAdd))
@@ -125,6 +149,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/vpn/wireguard", s.requireAuth(s.handleGetWireGuard))
 	mux.HandleFunc("PUT /api/v1/vpn/wireguard", s.requireAuth(s.handleSetWireGuard))
 	mux.HandleFunc("POST /api/v1/vpn/wireguard/peers", s.requireAuth(s.handleAddWireGuardPeer))
+	mux.HandleFunc("PATCH /api/v1/vpn/wireguard/peers/{id}", s.requireAuth(s.handlePatchWireGuardPeer))
 	mux.HandleFunc("DELETE /api/v1/vpn/wireguard/peers/{id}", s.requireAuth(s.handleDelWireGuardPeer))
 
 	// SQM/CAKE QoS & vnStat Traffic
@@ -227,14 +252,18 @@ func isSameOrigin(r *http.Request, origin string) bool {
 }
 
 func (s *Server) RestoreRuntimeOnBoot() {
-	wg := s.Store.Get().WireGuard
-	if wg.Enabled && wg.PrivateKey != "" {
-		if err := applyWireGuard(wg); err != nil {
+	st := s.Store.Get()
+	if _, err := os.Stat(nftVarsPath); err == nil {
+		_ = syncNetIfConfigs(st)
+	}
+	if st.WireGuard.Enabled && st.WireGuard.PrivateKey != "" {
+		if err := applyWireGuard(st.WireGuard); err != nil {
 			log.Printf("boot restore WireGuard failed: %v", err)
 		} else {
-			log.Printf("boot restore WireGuard (%s) active", wg.Interface)
+			log.Printf("boot restore WireGuard (%s) active", st.WireGuard.Interface)
 		}
 	}
+	restorePersistedRoutes(st.StaticRoutes)
 }
 
 func (s *Server) requireAuth(next http.HandlerFunc) http.HandlerFunc {
@@ -352,7 +381,6 @@ func decodeJSON(r *http.Request, dst any) error {
 	if err := dec.Decode(dst); err != nil {
 		return err
 	}
-	// Reject trailing garbage or concatenated JSON payloads
 	if err := dec.Decode(&struct{}{}); err != io.EOF {
 		return errors.New("unexpected trailing data after JSON payload")
 	}

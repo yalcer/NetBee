@@ -48,7 +48,6 @@ func applyWireGuard(wg config.WireGuardState) error {
 	}
 	_, _ = sys.Run(3*time.Second, "modprobe", "wireguard")
 	_, _ = sys.Run(3*time.Second, "ip", "link", "add", iface, "type", "wireguard")
-	// Flush existing addresses first so changing wg.Address does not accumulate stale secondary tunnel IPs
 	_, _ = sys.Run(3*time.Second, "ip", "address", "flush", "dev", iface)
 	if _, err := sys.Run(3*time.Second, "ip", "address", "add", wg.Address, "dev", iface); err != nil {
 		return err
@@ -69,7 +68,7 @@ func readLiveWGPeers(iface string) map[string]map[string]any {
 	lines := strings.Split(strings.TrimSpace(res.Stdout), "\n")
 	for i, line := range lines {
 		if i == 0 || line == "" {
-			continue // first line is interface info
+			continue
 		}
 		f := strings.Split(line, "\t")
 		if len(f) < 7 {
@@ -89,9 +88,17 @@ func readLiveWGPeers(iface string) map[string]map[string]any {
 	return out
 }
 
+func redactWGState(wg config.WireGuardState) config.WireGuardState {
+	wg.PrivateKey = ""
+	for i := range wg.Peers {
+		wg.Peers[i].HasPSK = wg.Peers[i].PresharedKey != ""
+		wg.Peers[i].PresharedKey = ""
+	}
+	return wg
+}
+
 func (s *Server) handleGetWireGuard(w http.ResponseWriter, r *http.Request) {
-	wg := s.Store.Get().WireGuard
-	wg.PrivateKey = "" // never expose server private key
+	wg := redactWGState(s.Store.Get().WireGuard)
 	iface := wg.Interface
 	if iface == "" {
 		iface = "wg0"
@@ -122,12 +129,10 @@ func normalizePeerAllowedIPs(raw string) (string, net.IP, error) {
 		return "", nil, err
 	}
 	ones, bits := ipNet.Mask.Size()
-	return fmt.Sprintf("%s/%d", ip.String(), ones), ip, func() error {
-		if bits == 0 {
-			return fmt.Errorf("invalid prefix")
-		}
-		return nil
-	}()
+	if bits == 0 {
+		return "", nil, fmt.Errorf("invalid prefix")
+	}
+	return fmt.Sprintf("%s/%d", ip.String(), ones), ip, nil
 }
 
 func (s *Server) handleSetWireGuard(w http.ResponseWriter, r *http.Request) {
@@ -164,7 +169,6 @@ func (s *Server) handleSetWireGuard(w http.ResponseWriter, r *http.Request) {
 	}
 	req.Endpoint = strings.TrimSpace(req.Endpoint)
 	if req.Endpoint != "" {
-		// Strip accidental :port if user included it in Endpoint host field
 		if h, _, splitErr := net.SplitHostPort(req.Endpoint); splitErr == nil && net.ParseIP(req.Endpoint) == nil {
 			req.Endpoint = h
 		}
@@ -183,8 +187,7 @@ func (s *Server) handleSetWireGuard(w http.ResponseWriter, r *http.Request) {
 
 	var next config.WireGuardState
 	var syncFW bool
-	var fwState config.FirewallState
-	var lanIP string
+	var fullState config.State
 	if err := s.Store.Update(func(st *config.State) error {
 		wg := st.WireGuard
 		if wg.Interface == "" {
@@ -212,10 +215,9 @@ func (s *Server) handleSetWireGuard(w http.ResponseWriter, r *http.Request) {
 		if st.Firewall.WireGuardPort != req.ListenPort {
 			st.Firewall.WireGuardPort = req.ListenPort
 			syncFW = st.Firewall.ExposeWireGuard
-			fwState = st.Firewall
-			lanIP = st.LAN.IP
 		}
 		next = wg
+		fullState = *st
 		return nil
 	}); err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
@@ -226,15 +228,17 @@ func (s *Server) handleSetWireGuard(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	if _, err := os.Stat(nftVarsPath); err == nil {
+		_ = syncNetIfConfigs(fullState)
+	}
 	if syncFW {
-		_ = config.AtomicWriteFile(uiNftDropInPath, []byte(RenderCustomNFT(fwState, lanIP)), 0644)
+		_ = config.AtomicWriteFile(uiNftDropInPath, []byte(RenderCustomNFT(fullState.Firewall, fullState.LAN.IP)), 0644)
 		_, _ = sys.Run(10*time.Second, "/etc/init.d/S35nftables", "reload")
 	}
-	next.PrivateKey = ""
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "config": next})
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "config": redactWGState(next)})
 }
 
-func BuildWGClientConfig(clientPriv, peerAllowedIPs string, wg config.WireGuardState) string {
+func BuildWGClientConfig(clientPriv, peerAllowedIPs, presharedKey string, wg config.WireGuardState) string {
 	endpointHost := wg.Endpoint
 	endpointStr := "<YOUR_PUBLIC_IP_OR_DDNS>:" + strconv.Itoa(wg.ListenPort)
 	if endpointHost != "" {
@@ -244,17 +248,23 @@ func BuildWGClientConfig(clientPriv, peerAllowedIPs string, wg config.WireGuardS
 	if !sys.ValidIPList(dns) {
 		dns = "192.168.10.1"
 	}
+	pskLine := ""
+	if presharedKey != "" && sys.ValidWGKey(presharedKey) {
+		pskLine = fmt.Sprintf("PresharedKey = %s\n", strings.TrimSpace(presharedKey))
+	}
 	return fmt.Sprintf(
-		"[Interface]\nPrivateKey = %s\nAddress = %s\nDNS = %s\n\n[Peer]\nPublicKey = %s\nEndpoint = %s\nAllowedIPs = 0.0.0.0/0, ::/0\nPersistentKeepalive = 25\n",
-		clientPriv, peerAllowedIPs, dns, wg.PublicKey, endpointStr,
+		"[Interface]\nPrivateKey = %s\nAddress = %s\nDNS = %s\n\n[Peer]\nPublicKey = %s\n%sEndpoint = %s\nAllowedIPs = 0.0.0.0/0, ::/0\nPersistentKeepalive = 25\n",
+		clientPriv, peerAllowedIPs, dns, wg.PublicKey, pskLine, endpointStr,
 	)
 }
 
 func (s *Server) handleAddWireGuardPeer(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Name       string `json:"name"`
-		AllowedIPs string `json:"allowed_ips"` // e.g. "10.66.66.2/32"
-		PublicKey  string `json:"public_key"`  // optional; auto-generated if omitted
+		Name         string `json:"name"`
+		AllowedIPs   string `json:"allowed_ips"`   // e.g. "10.66.66.2/32"
+		PublicKey    string `json:"public_key"`    // optional; auto-generated if omitted
+		PresharedKey string `json:"preshared_key"` // optional
+		UsePSK       bool   `json:"use_psk"`       // auto-generate PresharedKey via wg genpsk
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid json body")
@@ -290,12 +300,27 @@ func (s *Server) handleAddWireGuardPeer(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	psk := strings.TrimSpace(req.PresharedKey)
+	if psk != "" && !sys.ValidWGKey(psk) {
+		writeErr(w, http.StatusBadRequest, "invalid WireGuard preshared_key")
+		return
+	}
+	if psk == "" && req.UsePSK {
+		pskRes, err := sys.Run(3*time.Second, "wg", "genpsk")
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		psk = strings.TrimSpace(pskRes.Stdout)
+	}
+
 	peer := config.WireGuardPeer{
-		ID:         fmt.Sprintf("peer%d", time.Now().UnixMilli()),
-		Name:       req.Name,
-		PublicKey:  clientPub,
-		AllowedIPs: normalizedAllowed,
-		Enabled:    true,
+		ID:           fmt.Sprintf("peer%d", time.Now().UnixMilli()),
+		Name:         req.Name,
+		PublicKey:    clientPub,
+		PresharedKey: psk,
+		AllowedIPs:   normalizedAllowed,
+		Enabled:      true,
 	}
 
 	var wg config.WireGuardState
@@ -303,7 +328,6 @@ func (s *Server) handleAddWireGuardPeer(w http.ResponseWriter, r *http.Request) 
 		if srvIP, _, parseErr := net.ParseCIDR(st.WireGuard.Address); parseErr == nil && srvIP.Equal(peerIP) {
 			return fmt.Errorf("conflict: peer allowed_ips cannot match server tunnel IP (%s)", srvIP.String())
 		}
-		// Ensure server keypair exists so client_config always has a valid server PublicKey
 		if st.WireGuard.PrivateKey == "" {
 			privRes, err := sys.Run(3*time.Second, "wg", "genkey")
 			if err != nil {
@@ -348,14 +372,101 @@ func (s *Server) handleAddWireGuardPeer(w http.ResponseWriter, r *http.Request) 
 
 	clientConf := ""
 	if clientPriv != "" {
-		clientConf = BuildWGClientConfig(clientPriv, peer.AllowedIPs, wg)
+		clientConf = BuildWGClientConfig(clientPriv, peer.AllowedIPs, psk, wg)
 	}
+	peer.HasPSK = peer.PresharedKey != ""
+	peer.PresharedKey = ""
 
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"ok":            true,
 		"peer":          peer,
 		"client_config": clientConf,
 	})
+}
+
+func (s *Server) handlePatchWireGuardPeer(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	var req struct {
+		Name       *string `json:"name"`
+		Enabled    *bool   `json:"enabled"`
+		AllowedIPs *string `json:"allowed_ips"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid json body")
+		return
+	}
+	if req.Name != nil && (*req.Name == "" || !sys.ValidSafeString(*req.Name)) {
+		writeErr(w, http.StatusBadRequest, "invalid peer name")
+		return
+	}
+
+	var normAllowed string
+	var peerIP net.IP
+	if req.AllowedIPs != nil {
+		var err error
+		normAllowed, peerIP, err = normalizePeerAllowedIPs(*req.AllowedIPs)
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, "invalid allowed_ips")
+			return
+		}
+	}
+
+	found := false
+	var updatedPeer config.WireGuardPeer
+	var wg config.WireGuardState
+	if err := s.Store.Update(func(st *config.State) error {
+		if peerIP != nil {
+			if srvIP, _, parseErr := net.ParseCIDR(st.WireGuard.Address); parseErr == nil && srvIP.Equal(peerIP) {
+				return fmt.Errorf("conflict: peer allowed_ips cannot match server tunnel IP")
+			}
+			for _, existing := range st.WireGuard.Peers {
+				if existing.ID != id && existing.AllowedIPs == normAllowed {
+					return fmt.Errorf("duplicate peer allowed_ips: %s", normAllowed)
+				}
+			}
+		}
+		for i, p := range st.WireGuard.Peers {
+			if p.ID == id {
+				if req.Name != nil {
+					p.Name = *req.Name
+				}
+				if req.Enabled != nil {
+					p.Enabled = *req.Enabled
+				}
+				if req.AllowedIPs != nil {
+					p.AllowedIPs = normAllowed
+				}
+				st.WireGuard.Peers[i] = p
+				updatedPeer = p
+				found = true
+				break
+			}
+		}
+		if !found {
+			return fmt.Errorf("peer not found")
+		}
+		wg = st.WireGuard
+		return nil
+	}); err != nil {
+		status := http.StatusBadRequest
+		if !found {
+			status = http.StatusNotFound
+		} else if strings.Contains(err.Error(), "duplicate") || strings.Contains(err.Error(), "conflict") {
+			status = http.StatusConflict
+		}
+		writeErr(w, status, err.Error())
+		return
+	}
+
+	if wg.Enabled {
+		if err := applyWireGuard(wg); err != nil {
+			writeErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+	}
+	updatedPeer.HasPSK = updatedPeer.PresharedKey != ""
+	updatedPeer.PresharedKey = ""
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "peer": updatedPeer})
 }
 
 func (s *Server) handleDelWireGuardPeer(w http.ResponseWriter, r *http.Request) {

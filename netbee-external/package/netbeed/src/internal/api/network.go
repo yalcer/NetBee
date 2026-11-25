@@ -13,10 +13,77 @@ import (
 	"github.com/yalcer/netbee/netbeed/internal/sys"
 )
 
-const adguardYAMLPath = "/etc/adguardhome/AdGuardHome.yaml"
+const (
+	adguardYAMLPath = "/etc/adguardhome/AdGuardHome.yaml"
+	nftVarsPath     = "/etc/nftables.vars"
+	netifEnvPath    = "/etc/netbee/netif.env"
+)
 
 func sysMarshal(v any) ([]byte, error) {
 	return json.Marshal(v)
+}
+
+// RenderNftablesVars generates /etc/nftables.vars so nftables.conf always tracks configured LAN/WAN/WG interfaces.
+func RenderNftablesVars(st config.State) string {
+	lanIf := st.LAN.Interface
+	if lanIf == "" || !sys.ValidIface(lanIf) {
+		lanIf = "eth0"
+	}
+	wanIf := st.WAN.Interface
+	if wanIf == "" || !sys.ValidIface(wanIf) {
+		wanIf = "eth1"
+	}
+	wgIf := st.WireGuard.Interface
+	if wgIf == "" || !sys.ValidIface(wgIf) {
+		wgIf = "wg0"
+	}
+	wanList := []string{fmt.Sprintf("%q", wanIf)}
+	if st.WAN.Mode == "ont_vlan" && st.WAN.VLANID > 0 {
+		wanList = append(wanList, fmt.Sprintf("%q", fmt.Sprintf("%s.%d", wanIf, st.WAN.VLANID)))
+	}
+	wanList = append(wanList, `"ppp0"`)
+	return fmt.Sprintf(
+		"# Managed by NetBee OS (netbeed) - Dynamic interface definitions\n"+
+			"define LAN_IF = %q\n"+
+			"define WAN_IFS = { %s }\n"+
+			"define WG_IF = %q\n",
+		lanIf, strings.Join(wanList, ", "), wgIf,
+	)
+}
+
+// RenderNetifEnv generates /etc/netbee/netif.env consumed by S42nft-offload, S86vnstatd, and netbee-hotplug-wan.
+func RenderNetifEnv(st config.State) string {
+	lanIf := st.LAN.Interface
+	if lanIf == "" || !sys.ValidIface(lanIf) {
+		lanIf = "eth0"
+	}
+	wanIf := st.WAN.Interface
+	if wanIf == "" || !sys.ValidIface(wanIf) {
+		wanIf = "eth1"
+	}
+	wgIf := st.WireGuard.Interface
+	if wgIf == "" || !sys.ValidIface(wgIf) {
+		wgIf = "wg0"
+	}
+	mode := st.WAN.Mode
+	if mode == "" {
+		mode = "dhcp"
+	}
+	return fmt.Sprintf(
+		"# Managed by NetBee OS (netbeed)\n"+
+			"LAN_IF=%q\n"+
+			"WAN_IF=%q\n"+
+			"WAN_MODE=%q\n"+
+			"WG_IF=%q\n",
+		lanIf, wanIf, mode, wgIf,
+	)
+}
+
+func syncNetIfConfigs(st config.State) error {
+	if err := config.AtomicWriteFile(nftVarsPath, []byte(RenderNftablesVars(st)), 0644); err != nil {
+		return err
+	}
+	return config.AtomicWriteFile(netifEnvPath, []byte(RenderNetifEnv(st)), 0644)
 }
 
 func (s *Server) handleInterfaces(w http.ResponseWriter, r *http.Request) {
@@ -30,7 +97,6 @@ func (s *Server) handleInterfaces(w http.ResponseWriter, r *http.Request) {
 		writeValidatedRawJSON(w, http.StatusOK, []byte(res.Stdout), "[]")
 		return
 	}
-	// Enrich physical Ethernet interfaces with ethtool link speed/duplex when available
 	for _, item := range ifaces {
 		name, _ := item["ifname"].(string)
 		if name == "" || name == "lo" || !sys.ValidIface(name) {
@@ -52,6 +118,75 @@ func (s *Server) handleInterfaces(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"interfaces": ifaces})
 }
 
+func validateStaticRoute(rt config.StaticRoute) error {
+	if rt.ID != "" && !sys.ValidID(rt.ID) {
+		return fmt.Errorf("invalid route id")
+	}
+	if !sys.ValidIPOrCIDR(rt.Destination) {
+		return fmt.Errorf("invalid destination CIDR")
+	}
+	if rt.Gateway == "" && rt.Device == "" {
+		return fmt.Errorf("specify at least gateway or device")
+	}
+	dstV6 := isIPv6Addr(rt.Destination)
+	if rt.Gateway != "" {
+		gwIP := net.ParseIP(rt.Gateway)
+		if gwIP == nil || (gwIP.To4() == nil) != dstV6 {
+			return fmt.Errorf("invalid gateway IP (must match destination IP family)")
+		}
+	}
+	if rt.Device != "" && !sys.ValidIface(rt.Device) {
+		return fmt.Errorf("invalid device name")
+	}
+	if rt.Metric < 0 || rt.Metric > 65535 {
+		return fmt.Errorf("metric must be between 0 and 65535")
+	}
+	return nil
+}
+
+func applyStaticRoute(rt config.StaticRoute) error {
+	var args []string
+	if isIPv6Addr(rt.Destination) {
+		args = append(args, "-6")
+	}
+	args = append(args, "route", "replace", rt.Destination)
+	if rt.Gateway != "" {
+		args = append(args, "via", rt.Gateway)
+	}
+	if rt.Device != "" {
+		args = append(args, "dev", rt.Device)
+	}
+	if rt.Metric > 0 {
+		args = append(args, "metric", fmt.Sprintf("%d", rt.Metric))
+	}
+	_, err := sys.Run(5*time.Second, "ip", args...)
+	return err
+}
+
+func deleteStaticRoute(rt config.StaticRoute) error {
+	var args []string
+	if isIPv6Addr(rt.Destination) {
+		args = append(args, "-6")
+	}
+	args = append(args, "route", "del", rt.Destination)
+	if rt.Gateway != "" {
+		args = append(args, "via", rt.Gateway)
+	}
+	if rt.Device != "" {
+		args = append(args, "dev", rt.Device)
+	}
+	_, err := sys.Run(5*time.Second, "ip", args...)
+	return err
+}
+
+func restorePersistedRoutes(routes []config.StaticRoute) {
+	for _, rt := range routes {
+		if rt.Enabled {
+			_ = applyStaticRoute(rt)
+		}
+	}
+}
+
 func (s *Server) handleRoutes(w http.ResponseWriter, r *http.Request) {
 	v4, err := sys.Run(5*time.Second, "ip", "-j", "route", "show")
 	if err != nil {
@@ -63,78 +198,112 @@ func (s *Server) handleRoutes(w http.ResponseWriter, r *http.Request) {
 	r6 := []any{}
 	_ = json.Unmarshal([]byte(v4.Stdout), &r4)
 	_ = json.Unmarshal([]byte(v6.Stdout), &r6)
-	writeJSON(w, http.StatusOK, map[string]any{"ipv4": r4, "ipv6": r6})
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ipv4":          r4,
+		"ipv6":          r6,
+		"static_routes": s.Store.Get().StaticRoutes,
+	})
 }
 
 func (s *Server) handleAddRoute(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Destination string `json:"destination"` // e.g. "10.20.0.0/24" or "2001:db8:2::/64"
-		Gateway     string `json:"gateway"`     // optional if device specified
-		Device      string `json:"device"`      // optional if gateway specified
-		Metric      int    `json:"metric"`
-	}
+	var req config.StaticRoute
 	if err := decodeJSON(r, &req); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid json body")
 		return
 	}
-	if !sys.ValidIPOrCIDR(req.Destination) {
-		writeErr(w, http.StatusBadRequest, "invalid destination CIDR")
-		return
+	if req.ID == "" {
+		req.ID = fmt.Sprintf("rt%d", time.Now().UnixMilli())
 	}
-	if req.Gateway == "" && req.Device == "" {
-		writeErr(w, http.StatusBadRequest, "specify at least gateway or device")
-		return
-	}
-	dstV6 := isIPv6Addr(req.Destination)
-
-	var args []string
-	if dstV6 {
-		args = append(args, "-6")
-	}
-	args = append(args, "route", "replace", req.Destination)
-
-	if req.Gateway != "" {
-		gwIP := net.ParseIP(req.Gateway)
-		if gwIP == nil || (gwIP.To4() == nil) != dstV6 {
-			writeErr(w, http.StatusBadRequest, "invalid gateway IP (must match destination IP family)")
-			return
-		}
-		args = append(args, "via", req.Gateway)
-	}
-	if req.Device != "" {
-		if !sys.ValidIface(req.Device) {
-			writeErr(w, http.StatusBadRequest, "invalid device name")
-			return
-		}
-		args = append(args, "dev", req.Device)
-	}
-	if req.Metric > 0 {
-		args = append(args, "metric", fmt.Sprintf("%d", req.Metric))
-	}
-	if _, err := sys.Run(5*time.Second, "ip", args...); err != nil {
+	req.Enabled = true
+	if err := validateStaticRoute(req); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+	if err := applyStaticRoute(req); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := s.Store.Update(func(st *config.State) error {
+		updated := false
+		for i, existing := range st.StaticRoutes {
+			if existing.ID == req.ID || existing.Destination == req.Destination {
+				req.ID = existing.ID
+				st.StaticRoutes[i] = req
+				updated = true
+				break
+			}
+		}
+		if !updated {
+			st.StaticRoutes = append(st.StaticRoutes, req)
+		}
+		return nil
+	}); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{"ok": true, "route": req})
 }
 
 func (s *Server) handleDelRoute(w http.ResponseWriter, r *http.Request) {
 	var req struct {
+		ID          string `json:"id"`
 		Destination string `json:"destination"`
 	}
-	if err := decodeJSON(r, &req); err != nil || !sys.ValidIPOrCIDR(req.Destination) {
-		writeErr(w, http.StatusBadRequest, "invalid destination CIDR")
+	if err := decodeJSON(r, &req); err != nil || (req.ID == "" && !sys.ValidIPOrCIDR(req.Destination)) {
+		writeErr(w, http.StatusBadRequest, "provide valid route id or destination CIDR")
 		return
 	}
-	var args []string
-	if isIPv6Addr(req.Destination) {
-		args = append(args, "-6")
-	}
-	args = append(args, "route", "del", req.Destination)
-	if _, err := sys.Run(5*time.Second, "ip", args...); err != nil {
-		writeErr(w, http.StatusBadRequest, err.Error())
+	var removed *config.StaticRoute
+	_ = s.Store.Update(func(st *config.State) error {
+		next := make([]config.StaticRoute, 0, len(st.StaticRoutes))
+		for _, rt := range st.StaticRoutes {
+			if (req.ID != "" && rt.ID == req.ID) || (req.Destination != "" && rt.Destination == req.Destination) {
+				cp := rt
+				removed = &cp
+				continue
+			}
+			next = append(next, rt)
+		}
+		st.StaticRoutes = next
+		return nil
+	})
+	if removed != nil {
+		_ = deleteStaticRoute(*removed)
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 		return
 	}
+	if req.Destination != "" {
+		if err := deleteStaticRoute(config.StaticRoute{Destination: req.Destination}); err != nil {
+			writeErr(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+		return
+	}
+	writeErr(w, http.StatusNotFound, "static route not found")
+}
+
+func (s *Server) handleDelRouteByID(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	var removed *config.StaticRoute
+	_ = s.Store.Update(func(st *config.State) error {
+		next := make([]config.StaticRoute, 0, len(st.StaticRoutes))
+		for _, rt := range st.StaticRoutes {
+			if rt.ID == id {
+				cp := rt
+				removed = &cp
+				continue
+			}
+			next = append(next, rt)
+		}
+		st.StaticRoutes = next
+		return nil
+	})
+	if removed == nil {
+		writeErr(w, http.StatusNotFound, "static route not found")
+		return
+	}
+	_ = deleteStaticRoute(*removed)
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
@@ -295,28 +464,37 @@ func (s *Server) handleSetWAN(w http.ResponseWriter, r *http.Request) {
 	}
 
 	oldWAN := cur.WAN
+	oldIf := oldWAN.Interface
+	if oldIf == "" {
+		oldIf = "eth1"
+	}
 	files := []string{
 		"/etc/network/interfaces",
 		"/etc/dhcpcd.conf",
 		"/etc/ppp/peers/wan-pppoe",
 		"/etc/ppp/pap-secrets",
 		"/etc/ppp/chap-secrets",
+		nftVarsPath,
+		netifEnvPath,
 		s.Cfg.StatePath,
 	}
 	s.Rollback.Begin("WAN configuration update", time.Duration(s.Cfg.RollbackSeconds)*time.Second, files, func() {
 		_ = s.Store.Reload()
 		_, _ = sys.Run(5*time.Second, "killall", "pppd")
-		_, _ = sys.Run(10*time.Second, "/etc/init.d/S40network", "restart")
+		_, _ = sys.Run(5*time.Second, "ifdown", "--force", req.Interface)
+		_, _ = sys.Run(5*time.Second, "ifup", oldIf)
 		_, _ = sys.Run(10*time.Second, "/etc/init.d/S41dhcpcd", "restart")
+		_, _ = sys.Run(10*time.Second, "/etc/init.d/S35nftables", "reload")
+		if s.Store.Get().Firewall.FlowOffload {
+			_, _ = sys.Run(5*time.Second, "/etc/init.d/S42nft-offload", "start")
+		}
+		restorePersistedRoutes(s.Store.Get().StaticRoutes)
 	})
 
-	// Clean up previous WAN VLAN / PPPoE state BEFORE writing new interfaces file
+	// Bring down ONLY the old WAN interface BEFORE overwriting /etc/network/interfaces (never drops LAN eth0!)
+	_, _ = sys.Run(5*time.Second, "ifdown", "--force", oldIf)
 	_, _ = sys.Run(5*time.Second, "killall", "pppd")
 	if oldWAN.Mode == "ont_vlan" && oldWAN.VLANID > 0 {
-		oldIf := oldWAN.Interface
-		if oldIf == "" {
-			oldIf = "eth1"
-		}
 		_, _ = sys.Run(3*time.Second, "ip", "link", "del", fmt.Sprintf("%s.%d", oldIf, oldWAN.VLANID))
 	}
 
@@ -329,13 +507,18 @@ func (s *Server) handleSetWAN(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	lan := s.Store.Get().LAN
-	if err := config.AtomicWriteFile("/etc/network/interfaces", []byte(RenderInterfacesFile(lan, req)), 0644); err != nil {
+	st := s.Store.Get()
+	if err := syncNetIfConfigs(st); err != nil {
 		s.Rollback.RevertNow()
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	if err := config.AtomicWriteFile("/etc/dhcpcd.conf", []byte(RenderDHCPCDConf(lan, req)), 0644); err != nil {
+	if err := config.AtomicWriteFile("/etc/network/interfaces", []byte(RenderInterfacesFile(st.LAN, req)), 0644); err != nil {
+		s.Rollback.RevertNow()
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if err := config.AtomicWriteFile("/etc/dhcpcd.conf", []byte(RenderDHCPCDConf(st.LAN, req)), 0644); err != nil {
 		s.Rollback.RevertNow()
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
@@ -346,7 +529,6 @@ func (s *Server) handleSetWAN(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, http.StatusInternalServerError, err.Error())
 			return
 		}
-		// Write both PAP and CHAP secret tables so ISPs using CHAP/MS-CHAPv2 or PAP both authenticate
 		secret := fmt.Sprintf("%q * %q *\n", req.PPPoEUser, req.PPPoEPassword)
 		if err := config.AtomicWriteFile("/etc/ppp/pap-secrets", []byte(secret), 0600); err != nil {
 			s.Rollback.RevertNow()
@@ -360,8 +542,14 @@ func (s *Server) handleSetWAN(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	_, _ = sys.Run(10*time.Second, "/etc/init.d/S40network", "restart")
+	_, _ = sys.Run(5*time.Second, "vnstat", "--add", "-i", req.Interface)
+	_, _ = sys.Run(10*time.Second, "ifup", req.Interface)
 	_, _ = sys.Run(10*time.Second, "/etc/init.d/S41dhcpcd", "restart")
+	_, _ = sys.Run(10*time.Second, "/etc/init.d/S35nftables", "reload")
+	if st.Firewall.FlowOffload {
+		_, _ = sys.Run(5*time.Second, "/etc/init.d/S42nft-offload", "start")
+	}
+	restorePersistedRoutes(st.StaticRoutes)
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok":             true,
@@ -409,7 +597,6 @@ func deriveDHCPRange(ipStr, maskStr string) (string, string) {
 		}
 		return start.String(), end.String()
 	}
-	// Smaller subnets (/25../30): allocate safe host range inside subnet
 	bcast := make(net.IP, 4)
 	for i := 0; i < 4; i++ {
 		bcast[i] = netIP[i] | ^mask[i]
@@ -481,17 +668,26 @@ func (s *Server) handleSetLAN(w http.ResponseWriter, r *http.Request) {
 		"/etc/default/dropbear",
 		"/etc/hosts",
 		adguardYAMLPath,
+		nftVarsPath,
+		netifEnvPath,
 		uiNftDropInPath,
 		s.Cfg.StatePath,
 	}
 	s.Rollback.Begin("LAN IP change", time.Duration(s.Cfg.RollbackSeconds)*time.Second, files, func() {
 		_ = s.Store.Reload()
+		reverted := s.Store.Get()
 		_, _ = sys.Run(5*time.Second, "/etc/init.d/S85adguardhome", "stop")
-		_, _ = sys.Run(10*time.Second, "/etc/init.d/S40network", "restart")
+		_, _ = sys.Run(3*time.Second, "ip", "addr", "flush", "dev", req.Interface)
+		_, _ = sys.Run(3*time.Second, "ip", "addr", "flush", "dev", reverted.LAN.Interface)
+		_, _ = sys.Run(10*time.Second, "ifup", "--force", reverted.LAN.Interface)
 		_, _ = sys.Run(10*time.Second, "/etc/init.d/S41dhcpcd", "restart")
 		_, _ = sys.Run(5*time.Second, "/etc/init.d/S50dropbear", "restart")
 		_, _ = sys.Run(10*time.Second, "/etc/init.d/S35nftables", "reload")
+		if reverted.Firewall.FlowOffload {
+			_, _ = sys.Run(5*time.Second, "/etc/init.d/S42nft-offload", "start")
+		}
 		_, _ = sys.Run(5*time.Second, "/etc/init.d/S85adguardhome", "start")
+		restorePersistedRoutes(reverted.StaticRoutes)
 	})
 
 	if err := s.Store.Update(func(st *config.State) error {
@@ -506,6 +702,11 @@ func (s *Server) handleSetLAN(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	st := s.Store.Get()
+	if err := syncNetIfConfigs(st); err != nil {
+		s.Rollback.RevertNow()
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	if err := config.AtomicWriteFile("/etc/network/interfaces", []byte(RenderInterfacesFile(req, st.WAN)), 0644); err != nil {
 		s.Rollback.RevertNow()
 		writeErr(w, http.StatusInternalServerError, err.Error())
@@ -517,7 +718,6 @@ func (s *Server) handleSetLAN(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Preserve existing SSH password_auth (-s) and idle_timeout (-I) flags while updating LAN IP bind
 	rawDropbear, _ := os.ReadFile("/etc/default/dropbear")
 	pwAuth, idleSec := ParseDropbearConf(string(rawDropbear))
 	_ = config.AtomicWriteFile("/etc/default/dropbear", []byte(RenderDropbearConf(req.IP, pwAuth, idleSec)), 0644)
@@ -532,22 +732,28 @@ func (s *Server) handleSetLAN(w http.ResponseWriter, r *http.Request) {
 		_ = config.AtomicWriteFile(adguardYAMLPath, updatedAGH, 0600)
 	}
 
-	// Apply live after flushing HTTP 200 response so the 60s rollback timer genuinely guards reachability
+	// Apply live after flushing HTTP 200 response, flushing the old LAN IP first so phantom IPs never remain
 	if _, err := os.Stat("/etc/init.d/S40network"); err == nil {
-		go func(aghData []byte) {
+		go func(aghData []byte, stateSnap config.State) {
 			time.Sleep(400 * time.Millisecond)
 			if len(aghData) > 0 {
 				_, _ = sys.Run(5*time.Second, "/etc/init.d/S85adguardhome", "stop")
 				_ = config.AtomicWriteFile(adguardYAMLPath, aghData, 0600)
 			}
-			_, _ = sys.Run(10*time.Second, "/etc/init.d/S40network", "restart")
+			_, _ = sys.Run(5*time.Second, "vnstat", "--add", "-i", req.Interface)
+			_, _ = sys.Run(3*time.Second, "ip", "addr", "flush", "dev", oldLAN.Interface)
+			_, _ = sys.Run(10*time.Second, "ifup", "--force", req.Interface)
 			_, _ = sys.Run(10*time.Second, "/etc/init.d/S41dhcpcd", "restart")
 			_, _ = sys.Run(5*time.Second, "/etc/init.d/S50dropbear", "restart")
 			_, _ = sys.Run(10*time.Second, "/etc/init.d/S35nftables", "reload")
+			if stateSnap.Firewall.FlowOffload {
+				_, _ = sys.Run(5*time.Second, "/etc/init.d/S42nft-offload", "start")
+			}
 			if len(aghData) > 0 {
 				_, _ = sys.Run(5*time.Second, "/etc/init.d/S85adguardhome", "start")
 			}
-		}(updatedAGH)
+			restorePersistedRoutes(stateSnap.StaticRoutes)
+		}(updatedAGH, st)
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{

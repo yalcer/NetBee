@@ -64,7 +64,7 @@ type FirewallRule struct {
 	Enabled  bool   `json:"enabled"`
 	Chain    string `json:"chain"`    // "input" or "forward"
 	Action   string `json:"action"`   // "accept", "drop", "reject"
-	Protocol string `json:"protocol"` // "tcp", "udp", "icmp", "any"
+	Protocol string `json:"protocol"` // "tcp", "udp", "icmp", "icmpv6", "any"
 	InIface  string `json:"in_iface,omitempty"`
 	OutIface string `json:"out_iface,omitempty"`
 	SrcAddr  string `json:"src_addr,omitempty"`
@@ -80,17 +80,27 @@ type PortForward struct {
 	Protocol   string `json:"protocol"` // "tcp", "udp", "both"
 	ExtPort    string `json:"ext_port"` // e.g. "443" or "8080-8090"
 	IntIP      string `json:"int_ip"`   // e.g. "192.168.10.50"
-	IntPort    int    `json:"int_port"` // e.g. 443
+	IntPort    int    `json:"int_port"` // 0 preserves external port/range 1:1
 	SourceCIDR string `json:"source_cidr,omitempty"`
 }
 
 type FirewallState struct {
-	TransparentDNS   bool           `json:"transparent_dns"`
-	ExposeWireGuard  bool           `json:"expose_wireguard"`
-	WireGuardPort    int            `json:"wireguard_port"`
-	FlowOffload      bool           `json:"flow_offload"`
-	CustomRules      []FirewallRule `json:"custom_rules"`
-	PortForwards     []PortForward  `json:"port_forwards"`
+	TransparentDNS  bool           `json:"transparent_dns"`
+	ExposeWireGuard bool           `json:"expose_wireguard"`
+	WireGuardPort   int            `json:"wireguard_port"`
+	FlowOffload     bool           `json:"flow_offload"`
+	CustomRules     []FirewallRule `json:"custom_rules"`
+	PortForwards    []PortForward  `json:"port_forwards"`
+}
+
+type StaticRoute struct {
+	ID          string `json:"id"`
+	Name        string `json:"name,omitempty"`
+	Destination string `json:"destination"`
+	Gateway     string `json:"gateway,omitempty"`
+	Device      string `json:"device,omitempty"`
+	Metric      int    `json:"metric,omitempty"`
+	Enabled     bool   `json:"enabled"`
 }
 
 type WANState struct {
@@ -115,6 +125,7 @@ type WireGuardPeer struct {
 	Name         string `json:"name"`
 	PublicKey    string `json:"public_key"`
 	PresharedKey string `json:"preshared_key,omitempty"`
+	HasPSK       bool   `json:"has_psk,omitempty"`
 	AllowedIPs   string `json:"allowed_ips"`
 	Enabled      bool   `json:"enabled"`
 }
@@ -132,10 +143,11 @@ type WireGuardState struct {
 }
 
 type State struct {
-	WAN       WANState       `json:"wan"`
-	LAN       LANState       `json:"lan"`
-	Firewall  FirewallState  `json:"firewall"`
-	WireGuard WireGuardState `json:"wireguard"`
+	WAN          WANState       `json:"wan"`
+	LAN          LANState       `json:"lan"`
+	StaticRoutes []StaticRoute  `json:"static_routes"`
+	Firewall     FirewallState  `json:"firewall"`
+	WireGuard    WireGuardState `json:"wireguard"`
 }
 
 func DefaultState() State {
@@ -144,7 +156,7 @@ func DefaultState() State {
 			Mode:      "dhcp",
 			Interface: "eth1",
 			VLANID:    35,
-			MTU:       1492,
+			MTU:       1500,
 			IPv6PD:    false,
 		},
 		LAN: LANState{
@@ -152,6 +164,7 @@ func DefaultState() State {
 			IP:        "192.168.10.1",
 			Netmask:   "255.255.255.0",
 		},
+		StaticRoutes: []StaticRoute{},
 		Firewall: FirewallState{
 			TransparentDNS:  false,
 			ExposeWireGuard: false,
@@ -171,12 +184,6 @@ func DefaultState() State {
 	}
 }
 
-type Store struct {
-	mu    sync.RWMutex
-	path  string
-	state State
-}
-
 func normalizeState(st *State) {
 	if st.WAN.Interface == "" {
 		st.WAN.Interface = "eth1"
@@ -185,7 +192,11 @@ func normalizeState(st *State) {
 		st.WAN.Mode = "dhcp"
 	}
 	if st.WAN.MTU == 0 {
-		st.WAN.MTU = 1492
+		if st.WAN.Mode == "dhcp" {
+			st.WAN.MTU = 1500
+		} else {
+			st.WAN.MTU = 1492
+		}
 	}
 	if st.LAN.Interface == "" {
 		st.LAN.Interface = "eth0"
@@ -195,6 +206,9 @@ func normalizeState(st *State) {
 	}
 	if st.LAN.Netmask == "" {
 		st.LAN.Netmask = "255.255.255.0"
+	}
+	if st.StaticRoutes == nil {
+		st.StaticRoutes = []StaticRoute{}
 	}
 	if st.Firewall.WireGuardPort == 0 {
 		st.Firewall.WireGuardPort = 51820
@@ -219,6 +233,12 @@ func normalizeState(st *State) {
 	}
 }
 
+type Store struct {
+	mu    sync.RWMutex
+	path  string
+	state State
+}
+
 func NewStore(path string) (*Store, error) {
 	s := &Store{path: path, state: DefaultState()}
 	if data, err := os.ReadFile(path); err == nil {
@@ -235,8 +255,8 @@ func NewStore(path string) (*Store, error) {
 func (s *Store) Get() State {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	// Deep copy slices so callers cannot mutate internal state without Lock/Update
 	cp := s.state
+	cp.StaticRoutes = append([]StaticRoute{}, s.state.StaticRoutes...)
 	cp.Firewall.CustomRules = append([]FirewallRule{}, s.state.Firewall.CustomRules...)
 	cp.Firewall.PortForwards = append([]PortForward{}, s.state.Firewall.PortForwards...)
 	cp.WireGuard.Peers = append([]WireGuardPeer{}, s.state.WireGuard.Peers...)
@@ -247,11 +267,15 @@ func (s *Store) Update(fn func(*State) error) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	next := s.state
+	next.StaticRoutes = append([]StaticRoute{}, s.state.StaticRoutes...)
 	next.Firewall.CustomRules = append([]FirewallRule{}, s.state.Firewall.CustomRules...)
 	next.Firewall.PortForwards = append([]PortForward{}, s.state.Firewall.PortForwards...)
 	next.WireGuard.Peers = append([]WireGuardPeer{}, s.state.WireGuard.Peers...)
 	if err := fn(&next); err != nil {
 		return err
+	}
+	for i := range next.WireGuard.Peers {
+		next.WireGuard.Peers[i].HasPSK = false
 	}
 	normalizeState(&next)
 	if err := AtomicWriteJSON(s.path, next, 0600); err != nil {
@@ -323,4 +347,3 @@ func AtomicWriteJSON(path string, v any, perm os.FileMode) error {
 	b = append(b, '\n')
 	return AtomicWriteFile(path, b, perm)
 }
-

@@ -63,7 +63,7 @@ func (s *Server) proxyAdGuard(w http.ResponseWriter, method, subPath, rawQuery, 
 }
 
 func (s *Server) proxyAdGuardJSONPost(w http.ResponseWriter, r *http.Request, subPath string) {
-	b, err := readBoundedBody(r, 65536)
+	b, err := readBoundedBody(r, 262144) // 256 KB max for custom filter rules / DNS lists
 	if err != nil {
 		if errors.Is(err, errPayloadTooLarge) {
 			writeErr(w, http.StatusRequestEntityTooLarge, err.Error())
@@ -102,6 +102,14 @@ func (s *Server) handleDNSStatus(w http.ResponseWriter, r *http.Request) {
 	s.proxyAdGuard(w, http.MethodGet, "status", "", "", nil)
 }
 
+func (s *Server) handleDNSGetConfig(w http.ResponseWriter, r *http.Request) {
+	s.proxyAdGuard(w, http.MethodGet, "dns_info", "", "", nil)
+}
+
+func (s *Server) handleDNSSetConfig(w http.ResponseWriter, r *http.Request) {
+	s.proxyAdGuardJSONPost(w, r, "dns_config")
+}
+
 func (s *Server) handleDNSStats(w http.ResponseWriter, r *http.Request) {
 	s.proxyAdGuard(w, http.MethodGet, "stats", r.URL.RawQuery, "", nil)
 }
@@ -112,6 +120,46 @@ func (s *Server) handleDNSQueryLog(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleDNSFilters(w http.ResponseWriter, r *http.Request) {
 	s.proxyAdGuard(w, http.MethodGet, "filtering/status", "", "", nil)
+}
+
+func (s *Server) handleDNSFilterAdd(w http.ResponseWriter, r *http.Request) {
+	s.proxyAdGuardJSONPost(w, r, "filtering/add_url")
+}
+
+func (s *Server) handleDNSFilterSet(w http.ResponseWriter, r *http.Request) {
+	s.proxyAdGuardJSONPost(w, r, "filtering/set_url")
+}
+
+func (s *Server) handleDNSFilterDel(w http.ResponseWriter, r *http.Request) {
+	s.proxyAdGuardJSONPost(w, r, "filtering/remove_url")
+}
+
+func (s *Server) handleDNSFiltersRefresh(w http.ResponseWriter, r *http.Request) {
+	b, _ := readBoundedBody(r, 4096)
+	if len(bytes.TrimSpace(b)) == 0 {
+		b = []byte(`{"whitelist":false}`)
+	}
+	s.proxyAdGuard(w, http.MethodPost, "filtering/refresh", "", "application/json", bytes.NewReader(b))
+}
+
+func (s *Server) handleDNSSetUserRules(w http.ResponseWriter, r *http.Request) {
+	s.proxyAdGuardJSONPost(w, r, "filtering/set_rules")
+}
+
+func (s *Server) handleDNSBlockedServicesGet(w http.ResponseWriter, r *http.Request) {
+	s.proxyAdGuard(w, http.MethodGet, "blocked_services/get", "", "", nil)
+}
+
+func (s *Server) handleDNSBlockedServicesAll(w http.ResponseWriter, r *http.Request) {
+	s.proxyAdGuard(w, http.MethodGet, "blocked_services/all", "", "", nil)
+}
+
+func (s *Server) handleDNSBlockedServicesSet(w http.ResponseWriter, r *http.Request) {
+	s.proxyAdGuardJSONPost(w, r, "blocked_services/set")
+}
+
+func (s *Server) handleDNSCacheClear(w http.ResponseWriter, r *http.Request) {
+	s.proxyAdGuard(w, http.MethodPost, "cache_clear", "", "", nil)
 }
 
 func (s *Server) handleDNSProtection(w http.ResponseWriter, r *http.Request) {

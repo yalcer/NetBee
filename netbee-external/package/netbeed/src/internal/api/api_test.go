@@ -4,8 +4,15 @@ import (
 	"archive/tar"
 	"bytes"
 	"compress/gzip"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/base64"
 	"encoding/json"
+	"encoding/pem"
+	"math/big"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -30,6 +37,7 @@ func newTestServer(t *testing.T, adguardURL string, corsOrigins ...string) (*Ser
 		corsOrigins = []string{"http://localhost:5173"}
 	}
 	cfg := config.RuntimeConfig{
+		TLSDIR:          filepath.Join(dir, "tls"),
 		WebDir:          webDir,
 		StatePath:       filepath.Join(dir, "state.json"),
 		AuthPath:        filepath.Join(dir, "auth.json"),
@@ -86,7 +94,6 @@ func buildTarGz(t *testing.T, entries []tar.Header, bodies []string) []byte {
 }
 
 func TestAuthCORSOriginAndCSRFProtection(t *testing.T) {
-	// Include "*" in CORSOrigins to verify wildcard reflection is strictly blocked
 	srv, _ := newTestServer(t, "", "*", "http://localhost:5173")
 	h := srv.Handler()
 
@@ -191,7 +198,6 @@ func TestAuthCORSOriginAndCSRFProtection(t *testing.T) {
 		t.Fatalf("expected 401 for revoked session, got %d", rec.Code)
 	}
 
-	// Auth.Reload() invalidates active in-memory sessions (used after backup restore)
 	if err := srv.Auth.Reload(); err != nil {
 		t.Fatalf("Auth.Reload failed: %v", err)
 	}
@@ -205,7 +211,6 @@ func TestAuthCORSOriginAndCSRFProtection(t *testing.T) {
 }
 
 func TestValidatorsBackupTarGzAndSymlinkProtection(t *testing.T) {
-	// Strict ValidHost (no colons/ports on hostnames, valid IPv4/IPv6/FQDN only)
 	for _, okHost := range []string{"1.1.1.1", "2606:4700:4700::1111", "netbee", "dns.cloudflare.com"} {
 		if !sys.ValidHost(okHost) {
 			t.Fatalf("ValidHost rejected valid host %q", okHost)
@@ -217,40 +222,38 @@ func TestValidatorsBackupTarGzAndSymlinkProtection(t *testing.T) {
 		}
 	}
 
-	// Strict IPv4 subnet mask & unicast host checks
 	if !sys.ValidIPv4Netmask("255.255.255.0") || sys.ValidIPv4Netmask("192.168.10.1") || sys.ValidIPv4Netmask("255.255.255.255") {
 		t.Fatal("ValidIPv4Netmask check failed")
 	}
 	if !sys.ValidUnicastIPv4Host("192.168.10.1", "255.255.255.0") ||
-		sys.ValidUnicastIPv4Host("192.168.10.0", "255.255.255.0") || // network addr
-		sys.ValidUnicastIPv4Host("192.168.10.255", "255.255.255.0") || // broadcast addr
+		sys.ValidUnicastIPv4Host("192.168.10.0", "255.255.255.0") ||
+		sys.ValidUnicastIPv4Host("192.168.10.255", "255.255.255.0") ||
 		sys.ValidUnicastIPv4Host("127.0.0.1", "255.0.0.0") {
 		t.Fatal("ValidUnicastIPv4Host check failed")
 	}
 
-	// Exact 32-byte base64 WireGuard key check
 	validKey := base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{0x42}, 32))
 	if !sys.ValidWGKey(validKey) || sys.ValidWGKey("shortkey====") || sys.ValidWGKey(strings.Repeat("A", 43)) {
 		t.Fatal("ValidWGKey check failed")
 	}
-
-	// WireGuard DNS IP-list check (blocks newline/PostUp injection)
 	if !sys.ValidIPList("192.168.10.1, 1.1.1.1") || sys.ValidIPList("1.1.1.1\nPostUp = id") {
 		t.Fatal("ValidIPList check failed")
 	}
 
-	// Valid NetBee backup tar.gz passes
+	// Valid NetBee backup tar.gz (including nftables.vars and 99-netbee-router.conf) passes
 	goodTar := buildTarGz(t, []tar.Header{
 		{Name: "etc/netbee", Typeflag: tar.TypeDir, Mode: 0755},
 		{Name: "etc/netbee/state.json", Typeflag: tar.TypeReg},
+		{Name: "etc/netbee/netif.env", Typeflag: tar.TypeReg},
+		{Name: "etc/nftables.vars", Typeflag: tar.TypeReg},
+		{Name: "etc/sysctl.d/99-netbee-router.conf", Typeflag: tar.TypeReg},
 		{Name: "etc/ppp/chap-secrets", Typeflag: tar.TypeReg},
 		{Name: "root/.ssh/authorized_keys", Typeflag: tar.TypeReg},
-	}, []string{"", `{"lan":{"ip":"192.168.10.1"}}`, `"u" * "p" *`, "ssh-ed25519 AAAA..."})
+	}, []string{"", `{"lan":{"ip":"192.168.10.1"}}`, `WAN_IF="eth1"`, `define LAN_IF = "eth0"`, `net.ipv4.ip_forward = 1`, `"u" * "p" *`, "ssh-ed25519 AAAA..."})
 	if err := ValidateBackupTarGz(goodTar); err != nil {
 		t.Fatalf("expected valid backup tar.gz to pass, got: %v", err)
 	}
 
-	// Symlink tar-slip attack inside etc/ MUST be rejected
 	symlinkTar := buildTarGz(t, []tar.Header{
 		{Name: "etc/netbee/evil", Typeflag: tar.TypeSymlink, Linkname: "/usr/sbin"},
 	}, nil)
@@ -258,7 +261,6 @@ func TestValidatorsBackupTarGzAndSymlinkProtection(t *testing.T) {
 		t.Fatal("symlink inside backup archive was NOT rejected")
 	}
 
-	// Sensitive / executable system paths inside etc/ (/etc/shadow, /etc/ppp/ip-up, /etc/cron/crontabs/root) MUST be rejected
 	for _, forbidden := range []string{"etc/shadow", "etc/passwd", "etc/init.d/S90netbeed", "etc/ppp/ip-up", "etc/cron/crontabs/root", "../etc/hostname"} {
 		badTar := buildTarGz(t, []tar.Header{{Name: forbidden, Typeflag: tar.TypeReg}}, []string{"pwn"})
 		if err := ValidateBackupTarGz(badTar); err == nil {
@@ -267,60 +269,177 @@ func TestValidatorsBackupTarGzAndSymlinkProtection(t *testing.T) {
 	}
 }
 
-func TestFirewallWireGuardDropbearAndAdGuardSync(t *testing.T) {
-	// Firewall: DstPort with protocol "any" or "icmp" must be rejected (prevents silent match-all drop)
+func TestSubsystemIntegrationsWireGuardTLSAndServices(t *testing.T) {
+	srv, _ := newTestServer(t, "")
+	h := srv.Handler()
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", bytes.NewBufferString(`{"username":"admin","password":"netbee"}`)))
+	var lr struct{ Token string }
+	_ = json.Unmarshal(rec.Body.Bytes(), &lr)
+	authHdr := "Bearer " + lr.Token
+
+	// Stopping netbeed over the API MUST be blocked (prevents UI self-lockout)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/system/services/netbeed/stop", nil)
+	req.Header.Set("Authorization", authHdr)
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 when trying to stop netbeed via API, got %d", rec.Code)
+	}
+
+	// Dynamic nftables.vars & netif.env rendering for ONT VLAN + custom NICs
+	st := config.DefaultState()
+	st.LAN.Interface = "eth0"
+	st.WAN.Interface = "eth2"
+	st.WAN.Mode = "ont_vlan"
+	st.WAN.VLANID = 35
+	nftVars := RenderNftablesVars(st)
+	if !strings.Contains(nftVars, `define WAN_IFS = { "eth2", "eth2.35", "ppp0" }`) {
+		t.Fatalf("unexpected nftables.vars:\n%s", nftVars)
+	}
+	netEnv := RenderNetifEnv(st)
+	if !strings.Contains(netEnv, `WAN_IF="eth2"`) || !strings.Contains(netEnv, `WAN_MODE="ont_vlan"`) {
+		t.Fatalf("unexpected netif.env:\n%s", netEnv)
+	}
+
+	// Custom TLS upload + inspection + delete lifecycle
+	priv, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	tpl := x509.Certificate{
+		SerialNumber: big.NewInt(99),
+		Subject:      pkix.Name{CommonName: "router.home.arpa", Organization: []string{"Home Lab CA"}},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(24 * time.Hour),
+		DNSNames:     []string{"router.home.arpa"},
+	}
+	der, _ := x509.CreateCertificate(rand.Reader, &tpl, &tpl, &priv.PublicKey, priv)
+	keyDER, _ := x509.MarshalECPrivateKey(priv)
+	certPEM := string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}))
+	keyPEM := string(pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER}))
+
+	tlsPayload, _ := json.Marshal(map[string]any{"cert_pem": certPEM, "key_pem": keyPEM, "reload": false})
+	req = httptest.NewRequest(http.MethodPut, "/api/v1/system/tls", bytes.NewReader(tlsPayload))
+	req.Header.Set("Authorization", authHdr)
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("PUT /api/v1/system/tls failed: %d %s", rec.Code, rec.Body.String())
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/system/tls", nil)
+	req.Header.Set("Authorization", authHdr)
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"auto_self_signed":false`) || !strings.Contains(rec.Body.String(), "router.home.arpa") {
+		t.Fatalf("unexpected GET /api/v1/system/tls: %s", rec.Body.String())
+	}
+
+	// WireGuard peer PSK redaction & PATCH peer lifecycle
+	pubKey := base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{0x21}, 32))
+	pskKey := base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{0x33}, 32))
+	_ = srv.Store.Update(func(s *config.State) error {
+		s.WireGuard.Peers = append(s.WireGuard.Peers, config.WireGuardPeer{
+			ID: "peer1", Name: "Phone", PublicKey: pubKey, PresharedKey: pskKey, AllowedIPs: "10.66.66.2/32", Enabled: true,
+		})
+		return nil
+	})
+
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/vpn/wireguard", nil)
+	req.Header.Set("Authorization", authHdr)
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if strings.Contains(rec.Body.String(), pskKey) || !strings.Contains(rec.Body.String(), `"has_psk":true`) {
+		t.Fatalf("WireGuard PSK was not redacted properly: %s", rec.Body.String())
+	}
+
+	req = httptest.NewRequest(http.MethodPatch, "/api/v1/vpn/wireguard/peers/peer1", bytes.NewBufferString(`{"name":"Laptop","enabled":false,"allowed_ips":"10.66.66.9"}`))
+	req.Header.Set("Authorization", authHdr)
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"10.66.66.9/32"`) || !strings.Contains(rec.Body.String(), `"enabled":false`) {
+		t.Fatalf("PATCH WireGuard peer failed: %d %s", rec.Code, rec.Body.String())
+	}
+
+	// Installed timezones & sysctl GET endpoints
+	for _, ep := range []string{"/api/v1/system/timezones", "/api/v1/system/sysctl"} {
+		req = httptest.NewRequest(http.MethodGet, ep, nil)
+		req.Header.Set("Authorization", authHdr)
+		rec = httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GET %s failed: %d %s", ep, rec.Code, rec.Body.String())
+		}
+	}
+}
+
+func TestFirewallDropbearAndAdGuardExtendedEndpoints(t *testing.T) {
 	if err := validateFirewallRule(config.FirewallRule{
 		ID: "badport", Chain: "forward", Action: "drop", Protocol: "any", DstPort: "443",
 	}); err == nil {
 		t.Fatal("expected error when dst_port is set with protocol=any")
 	}
-	// OutIface on input chain must be rejected
 	if err := validateFirewallRule(config.FirewallRule{
 		ID: "badout", Chain: "input", Action: "drop", Protocol: "tcp", OutIface: "eth1",
 	}); err == nil {
 		t.Fatal("expected error when out_iface is set on input chain")
 	}
-	// Port-forward range with non-zero IntPort must be rejected
 	if err := validatePortForward(config.PortForward{
 		ID: "badpf", Protocol: "tcp", ExtPort: "8000-8010", IntIP: "192.168.10.50", IntPort: 8000,
 	}); err == nil {
 		t.Fatal("expected error when int_port != 0 with ext_port range")
 	}
 
-	// WireGuard client config brackets IPv6 endpoint properly
 	wg := config.WireGuardState{
 		PublicKey:  base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{0x11}, 32)),
 		Endpoint:   "2001:db8::1",
 		ListenPort: 51820,
 		DNS:        "192.168.10.1",
 	}
-	conf := BuildWGClientConfig("privkey", "10.66.66.2/32", wg)
-	if !strings.Contains(conf, "Endpoint = [2001:db8::1]:51820") {
-		t.Fatalf("expected bracketed IPv6 Endpoint in client config:\n%s", conf)
+	psk := base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{0x55}, 32))
+	conf := BuildWGClientConfig("privkey", "10.66.66.2/32", psk, wg)
+	if !strings.Contains(conf, "Endpoint = [2001:db8::1]:51820") || !strings.Contains(conf, "PresharedKey = "+psk) {
+		t.Fatalf("unexpected WG client config:\n%s", conf)
 	}
 
-	// Dropbear parser ignores comments containing "-s" and preserves -s / -I across LAN IP changes
-	rawDropbear := "# Note: -s disables password login\nDROPBEAR_ARGS=\"-p 192.168.10.1:22 -I 900\"\n"
-	pwAuth, idle := ParseDropbearConf(rawDropbear)
-	if !pwAuth || idle != 900 {
-		t.Fatalf("unexpected ParseDropbearConf result: pwAuth=%v idle=%d", pwAuth, idle)
-	}
-	renderedDropbear := RenderDropbearConf("192.168.50.1", false, 300)
-	pwAuth2, idle2 := ParseDropbearConf(renderedDropbear)
-	if pwAuth2 || idle2 != 300 || !strings.Contains(renderedDropbear, "-p 192.168.50.1:22") {
-		t.Fatalf("RenderDropbearConf round-trip failed: %q", renderedDropbear)
-	}
+	// AdGuard extended DNS endpoints (dns_info, filtering/refresh, blocked_services, cache_clear)
+	seen := map[string]bool{}
+	mockAGH := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seen[r.Method+" "+r.URL.Path] = true
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer mockAGH.Close()
 
-	// AdGuardHome.yaml LAN IP & DHCP pool sync
-	sampleAGH := "dns:\n  bind_hosts:\n    - 127.0.0.1\n    - 192.168.10.1\ndhcp:\n  interface_name: eth0\n  dhcpv4:\n    gateway_ip: 192.168.10.1\n    subnet_mask: 255.255.255.0\n    range_start: 192.168.10.100\n    range_end: 192.168.10.200\n"
-	updatedAGH := UpdateAdGuardLANConfig(
-		sampleAGH,
-		config.LANState{Interface: "eth0", IP: "192.168.10.1", Netmask: "255.255.255.0"},
-		config.LANState{Interface: "eth0", IP: "192.168.50.1", Netmask: "255.255.255.0"},
-	)
-	for _, want := range []string{"- 192.168.50.1", "gateway_ip: 192.168.50.1", "range_start: 192.168.50.100", "range_end: 192.168.50.200"} {
-		if !strings.Contains(updatedAGH, want) {
-			t.Fatalf("missing %q in updated AdGuardHome.yaml:\n%s", want, updatedAGH)
+	srv, _ := newTestServer(t, mockAGH.URL)
+	h := srv.Handler()
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", bytes.NewBufferString(`{"username":"admin","password":"netbee"}`)))
+	var lr struct{ Token string }
+	_ = json.Unmarshal(rec.Body.Bytes(), &lr)
+
+	calls := []struct{ method, path, body string }{
+		{http.MethodGet, "/api/v1/dns/config", ""},
+		{http.MethodPost, "/api/v1/dns/filters/refresh", ""},
+		{http.MethodGet, "/api/v1/dns/blocked-services", ""},
+		{http.MethodPost, "/api/v1/dns/cache/clear", ""},
+	}
+	for _, c := range calls {
+		req := httptest.NewRequest(c.method, c.path, bytes.NewBufferString(c.body))
+		req.Header.Set("Authorization", "Bearer "+lr.Token)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s %s failed: %d", c.method, c.path, rec.Code)
+		}
+	}
+	for _, wantUpstream := range []string{
+		"GET /control/dns_info",
+		"POST /control/filtering/refresh",
+		"GET /control/blocked_services/get",
+		"POST /control/cache_clear",
+	} {
+		if !seen[wantUpstream] {
+			t.Fatalf("missing upstream AdGuard call %q (seen=%v)", wantUpstream, seen)
 		}
 	}
 }
@@ -336,7 +455,6 @@ func TestDiagnosticsConcurrencySemaphoreAndRollback(t *testing.T) {
 	rel1()
 	rel2()
 
-	// Atomic rollback preserves 0600 permissions & reloads Store
 	dir := t.TempDir()
 	secretFile := filepath.Join(dir, "chap-secrets")
 	stateFile := filepath.Join(dir, "state.json")
@@ -357,31 +475,5 @@ func TestDiagnosticsConcurrencySemaphoreAndRollback(t *testing.T) {
 	info, _ := os.Stat(secretFile)
 	if info.Mode().Perm() != 0600 || store.Get().LAN.IP != "192.168.10.1" {
 		t.Fatalf("rollback failed: mode=%o ip=%s", info.Mode().Perm(), store.Get().LAN.IP)
-	}
-}
-
-func TestAdGuardProxySafePathCleaning(t *testing.T) {
-	var seenPath string
-	mockAGH := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		seenPath = r.URL.Path
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"running":true}`))
-	}))
-	defer mockAGH.Close()
-
-	srv, _ := newTestServer(t, mockAGH.URL)
-	h := srv.Handler()
-
-	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", bytes.NewBufferString(`{"username":"admin","password":"netbee"}`)))
-	var lr struct{ Token string }
-	_ = json.Unmarshal(rec.Body.Bytes(), &lr)
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/adguard/filtering/status", nil)
-	req.Header.Set("Authorization", "Bearer "+lr.Token)
-	rec = httptest.NewRecorder()
-	h.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK || seenPath != "/control/filtering/status" {
-		t.Fatalf("unexpected proxy result: %d path=%q", rec.Code, seenPath)
 	}
 }

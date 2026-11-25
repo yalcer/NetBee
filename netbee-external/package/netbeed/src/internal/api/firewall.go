@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -11,7 +12,10 @@ import (
 	"github.com/yalcer/netbee/netbeed/internal/sys"
 )
 
-const uiNftDropInPath = "/etc/nftables.d/10-ui-rules.nft"
+const (
+	uiNftDropInPath     = "/etc/nftables.d/10-ui-rules.nft"
+	customNftDropInPath = "/etc/nftables.d/00-custom.nft"
+)
 
 func isIPv6Addr(s string) bool {
 	if ip := net.ParseIP(s); ip != nil {
@@ -54,7 +58,6 @@ func RenderCustomNFT(fw config.FirewallState, lanIP string) string {
 			if pf.SourceCIDR != "" {
 				src = fmt.Sprintf("ip saddr %s ", pf.SourceCIDR)
 			}
-			// IntPort == 0 preserves external port or range 1:1
 			if pf.IntPort > 0 {
 				fmt.Fprintf(&b, "add rule ip netbee_nat prerouting iifname $WAN_IFS %s%s dport %s dnat to %s:%d\n",
 					src, proto, pf.ExtPort, pf.IntIP, pf.IntPort)
@@ -380,6 +383,43 @@ func (s *Server) handleAddFirewallRule(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, map[string]any{"ok": true, "rule": rule, "pending_commit": s.Rollback.Status()})
 }
 
+func (s *Server) handleUpdateFirewallRule(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	var rule config.FirewallRule
+	if err := decodeJSON(r, &rule); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid json body")
+		return
+	}
+	rule.ID = id
+	if err := validateFirewallRule(rule); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	found := false
+	err := s.mutateAndApplyFirewall("Update firewall rule", func(fw *config.FirewallState) error {
+		for i, existing := range fw.CustomRules {
+			if existing.ID == id {
+				fw.CustomRules[i] = rule
+				found = true
+				break
+			}
+		}
+		if !found {
+			return fmt.Errorf("rule not found")
+		}
+		return nil
+	})
+	if err != nil {
+		status := http.StatusBadRequest
+		if !found {
+			status = http.StatusNotFound
+		}
+		writeErr(w, status, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "rule": rule, "pending_commit": s.Rollback.Status()})
+}
+
 func (s *Server) handleDelFirewallRule(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	found := false
@@ -442,6 +482,43 @@ func (s *Server) handleAddPortForward(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, map[string]any{"ok": true, "port_forward": pf, "pending_commit": s.Rollback.Status()})
 }
 
+func (s *Server) handleUpdatePortForward(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	var pf config.PortForward
+	if err := decodeJSON(r, &pf); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid json body")
+		return
+	}
+	pf.ID = id
+	if err := validatePortForward(pf); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	found := false
+	err := s.mutateAndApplyFirewall("Update port forward", func(fw *config.FirewallState) error {
+		for i, existing := range fw.PortForwards {
+			if existing.ID == id {
+				fw.PortForwards[i] = pf
+				found = true
+				break
+			}
+		}
+		if !found {
+			return fmt.Errorf("port forward not found")
+		}
+		return nil
+	})
+	if err != nil {
+		status := http.StatusBadRequest
+		if !found {
+			status = http.StatusNotFound
+		}
+		writeErr(w, status, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "port_forward": pf, "pending_commit": s.Rollback.Status()})
+}
+
 func (s *Server) handleDelPortForward(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	found := false
@@ -467,6 +544,53 @@ func (s *Server) handleDelPortForward(w http.ResponseWriter, r *http.Request) {
 		}
 		writeErr(w, status, err.Error())
 		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "pending_commit": s.Rollback.Status()})
+}
+
+func (s *Server) handleGetFirewallRaw(w http.ResponseWriter, r *http.Request) {
+	data, _ := os.ReadFile(customNftDropInPath)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"path":    customNftDropInPath,
+		"content": string(data),
+	})
+}
+
+func (s *Server) handleSetFirewallRaw(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Content string `json:"content"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid json body")
+		return
+	}
+	if len(req.Content) > 65536 || strings.ContainsRune(req.Content, '\x00') {
+		writeErr(w, http.StatusBadRequest, "raw nftables snippet invalid or exceeds 64 KB")
+		return
+	}
+	s.Rollback.Begin("Custom raw nftables update", time.Duration(s.Cfg.RollbackSeconds)*time.Second, []string{customNftDropInPath}, func() {
+		_, _ = sys.Run(10*time.Second, "/etc/init.d/S35nftables", "reload")
+		if s.Store.Get().Firewall.FlowOffload {
+			_, _ = sys.Run(5*time.Second, "/etc/init.d/S42nft-offload", "start")
+		}
+	})
+	if err := config.AtomicWriteFile(customNftDropInPath, []byte(req.Content), 0644); err != nil {
+		s.Rollback.RevertNow()
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if _, err := sys.Run(5*time.Second, "nft", "-c", "-f", "/etc/nftables.conf"); err != nil {
+		s.Rollback.RevertNow()
+		writeErr(w, http.StatusBadRequest, "nftables syntax check failed: "+err.Error())
+		return
+	}
+	if _, err := sys.Run(10*time.Second, "/etc/init.d/S35nftables", "reload"); err != nil {
+		s.Rollback.RevertNow()
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if s.Store.Get().Firewall.FlowOffload {
+		_, _ = sys.Run(5*time.Second, "/etc/init.d/S42nft-offload", "start")
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "pending_commit": s.Rollback.Status()})
 }
@@ -544,7 +668,13 @@ func (s *Server) handleGetConntrack(w http.ResponseWriter, r *http.Request) {
 		}
 		flows = append(flows, entry)
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"count": len(flows), "flows": flows})
+	ctCount, ctMax := sys.ReadConntrackCounts()
+	writeJSON(w, http.StatusOK, map[string]any{
+		"count":          len(flows),
+		"kernel_count":   ctCount,
+		"conntrack_max":  ctMax,
+		"flows":          flows,
+	})
 }
 
 func (s *Server) handleFlushConntrack(w http.ResponseWriter, r *http.Request) {
