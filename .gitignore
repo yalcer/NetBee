@@ -1,0 +1,13 @@
+# Upstream Buildroot source & download cache
+buildroot-*/
+
+# Out-of-tree Buildroot build output & images
+output/
+*.img
+*.qcow2
+
+# OS & editor files
+.DS_Store
+*.swp
+*.swo
+*~
