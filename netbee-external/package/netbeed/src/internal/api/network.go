@@ -895,10 +895,15 @@ func ValidateEthtoolConfig(cfg config.EthtoolConfig) error {
 
 func applyEthtoolConfig(iface string, cfg config.EthtoolConfig) error {
 	var sArgs []string
-	if cfg.Autoneg {
-		sArgs = append(sArgs, "autoneg", "on")
-	} else {
+	if !cfg.Autoneg {
 		sArgs = append(sArgs, "speed", fmt.Sprintf("%d", cfg.Speed), "duplex", cfg.Duplex, "autoneg", "off")
+	} else {
+		// Only invoke 'autoneg on' when link previously had autoneg disabled (avoids PHY errors on virtio/USB NICs)
+		if cur, err := sys.Run(3*time.Second, "ethtool", iface); err == nil {
+			if link := ParseEthtoolSettings(cur.Stdout); link["autoneg"] == false {
+				sArgs = append(sArgs, "autoneg", "on")
+			}
+		}
 	}
 	if cfg.WoL != "" {
 		sArgs = append(sArgs, "wol", cfg.WoL)
