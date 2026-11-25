@@ -174,13 +174,14 @@ func (s *Server) handleSetIPv6(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
-// --- SSH (Dropbear & Authorized Keys) ---
+// --- SSH (Dropbear & Multi-User Authorized Keys: root + netbee) ---
 
 const authorizedKeysPath = "/root/.ssh/authorized_keys"
 
-// ParseDropbearConf extracts password_auth and idle_timeout solely from DROPBEAR_ARGS tokens (ignoring comments).
-func ParseDropbearConf(raw string) (passwordAuth bool, idleTimeout int) {
+// ParseDropbearConfEx extracts password_auth, allow_root_login, and idle_timeout solely from DROPBEAR_ARGS tokens.
+func ParseDropbearConfEx(raw string) (passwordAuth bool, allowRootLogin bool, idleTimeout int) {
 	passwordAuth = true
+	allowRootLogin = true
 	idleTimeout = 600
 	foundLine := false
 	var argsStr string
@@ -195,30 +196,57 @@ func ParseDropbearConf(raw string) (passwordAuth bool, idleTimeout int) {
 		}
 	}
 	if !foundLine {
-		return true, 600
+		return true, true, 600
 	}
 	idleTimeout = 0
 	fields := strings.Fields(argsStr)
 	for i := 0; i < len(fields); i++ {
 		tok := fields[i]
-		if tok == "-s" || tok == "-sg" || tok == "-gs" {
-			passwordAuth = false
-		}
 		if tok == "-I" && i+1 < len(fields) {
 			if n, err := strconv.Atoi(fields[i+1]); err == nil && n >= 0 {
 				idleTimeout = n
 			}
 			i++
+			continue
 		} else if strings.HasPrefix(tok, "-I") && len(tok) > 2 {
 			if n, err := strconv.Atoi(tok[2:]); err == nil && n >= 0 {
 				idleTimeout = n
 			}
+			continue
+		}
+		if tok == "-p" || tok == "-b" || tok == "-r" || tok == "-P" || tok == "-K" || tok == "-W" {
+			i++
+			continue
+		}
+		if strings.HasPrefix(tok, "-") && !strings.HasPrefix(tok, "--") && len(tok) >= 2 {
+			flags := tok[1:]
+			onlyShort := true
+			for _, ch := range flags {
+				if ch != 's' && ch != 'w' && ch != 'g' && ch != 'R' && ch != 'E' && ch != 'F' && ch != 'm' {
+					onlyShort = false
+					break
+				}
+			}
+			if onlyShort {
+				if strings.ContainsRune(flags, 's') {
+					passwordAuth = false
+				}
+				if strings.ContainsRune(flags, 'w') {
+					allowRootLogin = false
+				}
+			}
 		}
 	}
-	return passwordAuth, idleTimeout
+	return passwordAuth, allowRootLogin, idleTimeout
 }
 
-func RenderDropbearConf(lanIP string, passwordAuth bool, idleTimeout int) string {
+// ParseDropbearConf preserves backward compatibility for callers expecting (passwordAuth, idleTimeout).
+func ParseDropbearConf(raw string) (passwordAuth bool, idleTimeout int) {
+	pw, _, idle := ParseDropbearConfEx(raw)
+	return pw, idle
+}
+
+func RenderDropbearConfEx(lanIP string, passwordAuth bool, allowRootLogin bool, idleTimeout int) string {
 	if lanIP == "" {
 		lanIP = "192.168.10.1"
 	}
@@ -229,11 +257,18 @@ func RenderDropbearConf(lanIP string, passwordAuth bool, idleTimeout int) string
 	if !passwordAuth {
 		args += " -s"
 	}
+	if !allowRootLogin {
+		args += " -w"
+	}
 	return fmt.Sprintf("# Managed by NetBee OS (netbeed)\nDROPBEAR_ARGS=%q\n", args)
 }
 
-func readAuthorizedKeys() []string {
-	data, err := os.ReadFile(authorizedKeysPath)
+func RenderDropbearConf(lanIP string, passwordAuth bool, idleTimeout int) string {
+	return RenderDropbearConfEx(lanIP, passwordAuth, true, idleTimeout)
+}
+
+func readAuthorizedKeysFromPath(p string) []string {
+	data, err := os.ReadFile(p)
 	if err != nil {
 		return []string{}
 	}
@@ -245,6 +280,52 @@ func readAuthorizedKeys() []string {
 		}
 	}
 	return keys
+}
+
+func resolveSSHAccount(rawUser string) (acct string, sshDir string, akPath string, uid int, gid int, err error) {
+	u := strings.TrimSpace(rawUser)
+	if u == "" || u == "root" {
+		return "root", "/root/.ssh", authorizedKeysPath, 0, 0, nil
+	}
+	if u != "netbee" {
+		return "", "", "", -1, -1, fmt.Errorf("unsupported SSH user %q (expected 'root' or 'netbee')", u)
+	}
+	if info, ok := lookupPasswdUser("netbee"); ok && info.Home != "" && info.Home != "/" {
+		dir := strings.TrimRight(info.Home, "/") + "/.ssh"
+		return "netbee", dir, dir + "/authorized_keys", info.UID, info.GID, nil
+	}
+	return "netbee", "/home/netbee/.ssh", "/home/netbee/.ssh/authorized_keys", -1, -1, nil
+}
+
+func readAuthorizedKeysFor(acct string) []string {
+	_, _, akPath, _, _, err := resolveSSHAccount(acct)
+	if err != nil {
+		return []string{}
+	}
+	return readAuthorizedKeysFromPath(akPath)
+}
+
+func writeAuthorizedKeysFor(acct string, keys []string) error {
+	_, sshDir, akPath, uid, gid, err := resolveSSHAccount(acct)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(sshDir, 0700); err != nil {
+		return err
+	}
+	_ = os.Chmod(sshDir, 0700)
+	content := ""
+	if len(keys) > 0 {
+		content = strings.Join(keys, "\n") + "\n"
+	}
+	if err := config.AtomicWriteFile(akPath, []byte(content), 0600); err != nil {
+		return err
+	}
+	if uid >= 0 && gid >= 0 && os.Geteuid() == 0 {
+		_ = os.Chown(sshDir, uid, gid)
+		_ = os.Chown(akPath, uid, gid)
+	}
+	return nil
 }
 
 func validSSHPublicKey(key string) bool {
@@ -275,53 +356,102 @@ func validSSHPublicKey(key string) bool {
 }
 
 func (s *Server) handleGetSSH(w http.ResponseWriter, r *http.Request) {
+	acct, _, _, _, _, err := resolveSSHAccount(r.URL.Query().Get("user"))
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	def, _ := os.ReadFile("/etc/default/dropbear")
 	raw := string(def)
-	pwAuth, idleTimeout := ParseDropbearConf(raw)
+	pwAuth, allowRoot, idleTimeout := ParseDropbearConfEx(raw)
+	rootKeys := readAuthorizedKeysFor("root")
+	netbeeKeys := readAuthorizedKeysFor("netbee")
+	selectedKeys := rootKeys
+	if acct == "netbee" {
+		selectedKeys = netbeeKeys
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"dropbear_default": strings.TrimSpace(raw),
 		"password_auth":    pwAuth,
+		"allow_root_login": allowRoot,
 		"idle_timeout":     idleTimeout,
-		"authorized_keys":  readAuthorizedKeys(),
+		"user":             acct,
+		"authorized_keys":  selectedKeys,
+		"users_keys": map[string][]string{
+			"root":   rootKeys,
+			"netbee": netbeeKeys,
+		},
 	})
 }
 
 func (s *Server) handleSetSSH(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		PasswordAuth bool `json:"password_auth"`
-		IdleTimeout  int  `json:"idle_timeout"`
+		PasswordAuth   bool  `json:"password_auth"`
+		AllowRootLogin *bool `json:"allow_root_login"`
+		IdleTimeout    int   `json:"idle_timeout"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid json body")
 		return
 	}
-	if !req.PasswordAuth && len(readAuthorizedKeys()) == 0 {
-		writeErr(w, http.StatusBadRequest, "add at least one SSH public key before disabling password auth")
-		return
+	curDef, _ := os.ReadFile("/etc/default/dropbear")
+	_, curAllowRoot, _ := ParseDropbearConfEx(string(curDef))
+	allowRoot := curAllowRoot
+	if req.AllowRootLogin != nil {
+		allowRoot = *req.AllowRootLogin
+	}
+	if !allowRoot {
+		if _, ok := lookupPasswdUser("netbee"); !ok {
+			writeErr(w, http.StatusBadRequest, "cannot disable root SSH login when 'netbee' administrator account is missing")
+			return
+		}
+	}
+	rootKeys := readAuthorizedKeysFor("root")
+	netbeeKeys := readAuthorizedKeysFor("netbee")
+	if !req.PasswordAuth {
+		if !allowRoot && len(netbeeKeys) == 0 {
+			writeErr(w, http.StatusBadRequest, "add at least one SSH public key for 'netbee' before disabling both password auth and root SSH login")
+			return
+		}
+		if allowRoot && len(rootKeys) == 0 && len(netbeeKeys) == 0 {
+			writeErr(w, http.StatusBadRequest, "add at least one SSH public key before disabling password auth")
+			return
+		}
 	}
 	if req.IdleTimeout < 0 || req.IdleTimeout > 86400 {
 		writeErr(w, http.StatusBadRequest, "idle_timeout must be 0..86400")
 		return
 	}
-	content := RenderDropbearConf(s.Store.Get().LAN.IP, req.PasswordAuth, req.IdleTimeout)
+	content := RenderDropbearConfEx(s.Store.Get().LAN.IP, req.PasswordAuth, allowRoot, req.IdleTimeout)
 	if err := config.AtomicWriteFile("/etc/default/dropbear", []byte(content), 0644); err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	_, _ = sys.Run(5*time.Second, "/etc/init.d/S50dropbear", "restart")
 	writeJSON(w, http.StatusOK, map[string]any{
-		"ok":            true,
-		"password_auth": req.PasswordAuth,
-		"idle_timeout":  req.IdleTimeout,
+		"ok":               true,
+		"password_auth":    req.PasswordAuth,
+		"allow_root_login": allowRoot,
+		"idle_timeout":     req.IdleTimeout,
 	})
 }
 
 func (s *Server) handleAddSSHKey(w http.ResponseWriter, r *http.Request) {
 	var req struct {
+		User      string `json:"user"`
 		PublicKey string `json:"public_key"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid json body")
+		return
+	}
+	userParam := req.User
+	if userParam == "" {
+		userParam = r.URL.Query().Get("user")
+	}
+	acct, _, _, _, _, err := resolveSSHAccount(userParam)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	key := strings.TrimSpace(req.PublicKey)
@@ -329,7 +459,7 @@ func (s *Server) handleAddSSHKey(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid SSH public key format")
 		return
 	}
-	existing := readAuthorizedKeys()
+	existing := readAuthorizedKeysFor(acct)
 	newFields := strings.Fields(key)
 	for _, k := range existing {
 		kf := strings.Fields(k)
@@ -339,42 +469,48 @@ func (s *Server) handleAddSSHKey(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	keys := append(existing, key)
-	_ = os.MkdirAll("/root/.ssh", 0700)
-	if err := config.AtomicWriteFile(authorizedKeysPath, []byte(strings.Join(keys, "\n")+"\n"), 0600); err != nil {
+	if err := writeAuthorizedKeysFor(acct, keys); err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusCreated, map[string]any{"ok": true, "count": len(keys)})
+	writeJSON(w, http.StatusCreated, map[string]any{"ok": true, "user": acct, "count": len(keys)})
 }
 
 func (s *Server) handleDelSSHKey(w http.ResponseWriter, r *http.Request) {
+	acct, _, _, _, _, err := resolveSSHAccount(r.URL.Query().Get("user"))
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	idx, err := strconv.Atoi(r.PathValue("index"))
-	keys := readAuthorizedKeys()
+	keys := readAuthorizedKeysFor(acct)
 	if err != nil || idx < 0 || idx >= len(keys) {
 		writeErr(w, http.StatusBadRequest, "invalid key index")
 		return
 	}
-	// Prevent total SSH lockout if password auth (-s) is disabled and this is the last key
+	// Prevent total SSH lockout if password auth (-s) is disabled and no usable key would remain
 	if len(keys) == 1 {
 		def, _ := os.ReadFile("/etc/default/dropbear")
-		pwAuth, _ := ParseDropbearConf(string(def))
+		pwAuth, allowRoot, _ := ParseDropbearConfEx(string(def))
 		if !pwAuth {
-			writeErr(w, http.StatusBadRequest, "cannot remove last SSH key while password authentication is disabled")
-			return
+			otherHasKey := acct == "root" && len(readAuthorizedKeysFor("netbee")) > 0
+			if acct == "netbee" && allowRoot && len(readAuthorizedKeysFor("root")) > 0 {
+				otherHasKey = true
+			}
+			if !otherHasKey {
+				writeErr(w, http.StatusBadRequest, "cannot remove last usable SSH key while password authentication is disabled")
+				return
+			}
 		}
 	}
 	next := make([]string, 0, len(keys)-1)
 	next = append(next, keys[:idx]...)
 	next = append(next, keys[idx+1:]...)
-	content := ""
-	if len(next) > 0 {
-		content = strings.Join(next, "\n") + "\n"
-	}
-	if err := config.AtomicWriteFile(authorizedKeysPath, []byte(content), 0600); err != nil {
+	if err := writeAuthorizedKeysFor(acct, next); err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "count": len(next)})
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "user": acct, "count": len(next)})
 }
 
 // --- Scheduled Tasks (BusyBox crond: /etc/cron/crontabs/root) ---

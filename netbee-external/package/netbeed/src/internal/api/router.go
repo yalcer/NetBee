@@ -76,6 +76,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/system/stream", s.requireAuth(s.handleSystemStream))
 	mux.HandleFunc("GET /api/v1/system/services", s.requireAuth(s.handleListServices))
 	mux.HandleFunc("POST /api/v1/system/services/{name}/{action}", s.requireAuth(s.handleServiceAction))
+	mux.HandleFunc("GET /api/v1/system/users", s.requireAuth(s.handleGetOSUsers))
+	mux.HandleFunc("PUT /api/v1/system/users/{username}/password", s.requireAuth(s.handleSetOSUserPassword))
 	mux.HandleFunc("PUT /api/v1/system/hostname", s.requireAuth(s.handleSetHostname))
 	mux.HandleFunc("GET /api/v1/system/timezones", s.requireAuth(s.handleGetTimezones))
 	mux.HandleFunc("PUT /api/v1/system/timezone", s.requireAuth(s.handleSetTimezone))

@@ -330,6 +330,36 @@ func (m *Manager) ChangePassword(currentPassword, newPassword, keepSessionToken 
 	return nil
 }
 
+// SetPasswordDirect updates the Web API password directly from the local root CLI (netbee-passwd)
+// without requiring the previous password, clearing all active sessions and rate-limit lockouts.
+func (m *Manager) SetPasswordDirect(newPassword string) error {
+	if len(newPassword) < 8 || len(newPassword) > 128 {
+		return errors.New("new password must be between 8 and 128 characters")
+	}
+	if strings.ContainsAny(newPassword, "\n\r\x00") {
+		return errors.New("new password contains forbidden control characters")
+	}
+	m.mu.RLock()
+	username := m.creds.Username
+	m.mu.RUnlock()
+	if username == "" {
+		username = "admin"
+	}
+	next, err := hashPassword(username, newPassword, false)
+	if err != nil {
+		return err
+	}
+	if err := config.AtomicWriteJSON(m.path, next, 0600); err != nil {
+		return err
+	}
+	m.mu.Lock()
+	m.creds = next
+	m.sessions = make(map[string]Session)
+	m.rates = make(map[string]rateEntry)
+	m.mu.Unlock()
+	return nil
+}
+
 func (m *Manager) MustChangePassword() bool {
 	m.mu.RLock()
 	defer m.mu.RUnlock()

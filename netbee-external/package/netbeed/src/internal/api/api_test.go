@@ -567,3 +567,105 @@ func TestDiagnosticsConcurrencySemaphoreAndRollback(t *testing.T) {
 		t.Fatalf("rollback failed: mode=%o ip=%s", info.Mode().Perm(), store.Get().LAN.IP)
 	}
 }
+
+func TestPreCreatedOSUsersDropbearRootFlagAndBackupAllowlist(t *testing.T) {
+	pw, allowRoot, idle := ParseDropbearConfEx("# comment -s -w\nDROPBEAR_ARGS=\"-p 192.168.10.1:22 -I 900 -s -w\"\n")
+	if pw || allowRoot || idle != 900 {
+		t.Fatalf("unexpected ParseDropbearConfEx result: pw=%v allowRoot=%v idle=%d", pw, allowRoot, idle)
+	}
+	pw2, allowRoot2, idle2 := ParseDropbearConfEx("DROPBEAR_ARGS=\"-p 192.168.10.1:22 -sw -I300\"")
+	if pw2 || allowRoot2 || idle2 != 300 {
+		t.Fatalf("unexpected combined flag parse: pw=%v allowRoot=%v idle=%d", pw2, allowRoot2, idle2)
+	}
+	rendered := RenderDropbearConfEx("192.168.20.1", false, false, 600)
+	if !strings.Contains(rendered, "-p 192.168.20.1:22 -I 600 -s -w") {
+		t.Fatalf("unexpected RenderDropbearConfEx output: %s", rendered)
+	}
+
+	// Backup allowlist allows home/netbee/.ssh/authorized_keys, rejects home/netbee/.profile
+	if err := ValidateBackupArchiveEntries("home/\nhome/netbee/\nhome/netbee/.ssh/\nhome/netbee/.ssh/authorized_keys\n"); err != nil {
+		t.Fatalf("expected netbee authorized_keys to be allowed in backup: %v", err)
+	}
+	if err := ValidateBackupArchiveEntries("home/netbee/.profile\n"); err == nil {
+		t.Fatal("expected home/netbee/.profile to be rejected by backup allowlist")
+	}
+
+	// Mock /etc/passwd & /etc/group to test OS user discovery and SSH user resolution
+	tmp := t.TempDir()
+	nbHome := filepath.Join(tmp, "home-netbee")
+	_ = os.MkdirAll(filepath.Join(nbHome, ".ssh"), 0700)
+	_ = os.WriteFile(filepath.Join(nbHome, ".ssh", "authorized_keys"), []byte("ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl nb@test\n"), 0600)
+
+	origPasswd, origGroup := passwdFilePath, groupFilePath
+	passwdFilePath = filepath.Join(tmp, "passwd")
+	groupFilePath = filepath.Join(tmp, "group")
+	defer func() {
+		passwdFilePath = origPasswd
+		groupFilePath = origGroup
+	}()
+
+	_ = os.WriteFile(passwdFilePath, []byte(
+		"root:x:0:0:root:/root:/bin/sh\n"+
+			"daemon:x:1:1:daemon:/usr/sbin:/bin/false\n"+
+			"iperf:x:110:110:NetBee iperf3 Benchmark Daemon:/:/bin/false\n"+
+			"netbee:x:1000:1000:NetBee Administrator:"+nbHome+":/bin/sh\n"+
+			"nobody:x:65534:65534:nobody:/home:/bin/false\n",
+	), 0644)
+	_ = os.WriteFile(groupFilePath, []byte(
+		"root:x:0:\n"+
+			"adm:x:4:netbee\n"+
+			"wheel:x:10:root,netbee\n"+
+			"netdev:x:82:netbee\n"+
+			"iperf:x:110:\n"+
+			"netbee:x:1000:\n",
+	), 0644)
+
+	srv, _ := newTestServer(t, "")
+	h := srv.Handler()
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", bytes.NewBufferString(`{"username":"admin","password":"netbee"}`)))
+	var lr struct{ Token string }
+	_ = json.Unmarshal(rec.Body.Bytes(), &lr)
+
+	// GET /api/v1/system/users
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/system/users", nil)
+	req.Header.Set("Authorization", "Bearer "+lr.Token)
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"netbee"`) || !strings.Contains(rec.Body.String(), `"iperf"`) {
+		t.Fatalf("GET /api/v1/system/users failed: %d %s", rec.Code, rec.Body.String())
+	}
+
+	// Reject password update on locked service user 'iperf'
+	req = httptest.NewRequest(http.MethodPut, "/api/v1/system/users/iperf/password", bytes.NewBufferString(`{"password":"StrongPassword123"}`))
+	req.Header.Set("Authorization", "Bearer "+lr.Token)
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for service account password change, got %d", rec.Code)
+	}
+
+	// GET /api/v1/services/ssh?user=netbee returns netbee's authorized_keys
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/services/ssh?user=netbee", nil)
+	req.Header.Set("Authorization", "Bearer "+lr.Token)
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "nb@test") {
+		t.Fatalf("GET /api/v1/services/ssh?user=netbee failed: %d %s", rec.Code, rec.Body.String())
+	}
+
+	// SetPasswordDirect revokes existing tokens and allows new login
+	if err := srv.Auth.SetPasswordDirect("DirectCLIReset#99"); err != nil {
+		t.Fatalf("SetPasswordDirect failed: %v", err)
+	}
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/auth/me", nil)
+	req.Header.Set("Authorization", "Bearer "+lr.Token)
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected old session revoked after SetPasswordDirect, got %d", rec.Code)
+	}
+	if !srv.Auth.VerifyPassword("admin", "DirectCLIReset#99") {
+		t.Fatal("expected new password set via SetPasswordDirect to verify")
+	}
+}

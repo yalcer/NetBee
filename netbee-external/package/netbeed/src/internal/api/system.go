@@ -32,31 +32,35 @@ const (
 )
 
 var allowedBackupExactFiles = map[string]bool{
-	"etc/hostname":                     true,
-	"etc/hosts":                        true,
-	"etc/network/interfaces":           true,
-	"etc/nftables.conf":                true,
-	"etc/nftables.vars":                true,
+	"etc/hostname":                       true,
+	"etc/hosts":                          true,
+	"etc/network/interfaces":             true,
+	"etc/nftables.conf":                  true,
+	"etc/nftables.vars":                  true,
 	"etc/sysctl.d/99-netbee-router.conf": true,
-	"etc/dhcpcd.conf":                  true,
-	"etc/chrony.conf":                  true,
-	"etc/radvd.conf":                   true,
-	"etc/ppp/pap-secrets":              true,
-	"etc/ppp/chap-secrets":             true,
-	"etc/adguardhome/AdGuardHome.yaml": true,
-	"etc/default/dropbear":             true,
-	"root/.ssh/authorized_keys":        true,
+	"etc/dhcpcd.conf":                    true,
+	"etc/chrony.conf":                    true,
+	"etc/radvd.conf":                     true,
+	"etc/ppp/pap-secrets":                true,
+	"etc/ppp/chap-secrets":               true,
+	"etc/adguardhome/AdGuardHome.yaml":   true,
+	"etc/default/dropbear":               true,
+	"root/.ssh/authorized_keys":          true,
+	"home/netbee/.ssh/authorized_keys":   true,
 }
 
 var allowedBackupDirs = map[string]bool{
-	"etc":             true,
-	"etc/network":     true,
-	"etc/sysctl.d":    true,
-	"etc/ppp":         true,
-	"etc/adguardhome": true,
-	"etc/default":     true,
-	"root":            true,
-	"root/.ssh":       true,
+	"etc":              true,
+	"etc/network":      true,
+	"etc/sysctl.d":     true,
+	"etc/ppp":          true,
+	"etc/adguardhome":  true,
+	"etc/default":      true,
+	"root":             true,
+	"root/.ssh":        true,
+	"home":             true,
+	"home/netbee":      true,
+	"home/netbee/.ssh": true,
 }
 
 var allowedBackupTreePrefixes = []string{
@@ -147,6 +151,7 @@ func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 		CurrentPassword string `json:"current_password"`
 		NewPassword     string `json:"new_password"`
 		SyncRootSSH     bool   `json:"sync_root_ssh"`
+		SyncNetbeeSSH   *bool  `json:"sync_netbee_ssh"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid json body")
@@ -157,17 +162,41 @@ func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	syncedUsers := []string{}
 	if req.SyncRootSSH {
-		if _, err := sys.RunWithInput(5*time.Second, "root:"+req.NewPassword+"\n", "chpasswd"); err != nil {
+		if err := setOSUserPassword("root", req.NewPassword); err != nil {
 			writeJSON(w, http.StatusOK, map[string]any{
-				"ok":          true,
-				"ssh_synced":  false,
-				"ssh_warning": err.Error(),
+				"ok":           true,
+				"ssh_synced":   false,
+				"synced_users": syncedUsers,
+				"ssh_warning":  err.Error(),
 			})
 			return
 		}
+		syncedUsers = append(syncedUsers, "root")
+		syncNetbee := true
+		if req.SyncNetbeeSSH != nil {
+			syncNetbee = *req.SyncNetbeeSSH
+		}
+		if syncNetbee {
+			if _, ok := lookupPasswdUser("netbee"); ok {
+				if err := setOSUserPassword("netbee", req.NewPassword); err == nil {
+					syncedUsers = append(syncedUsers, "netbee")
+				}
+			}
+		}
+	} else if req.SyncNetbeeSSH != nil && *req.SyncNetbeeSSH {
+		if _, ok := lookupPasswdUser("netbee"); ok {
+			if err := setOSUserPassword("netbee", req.NewPassword); err == nil {
+				syncedUsers = append(syncedUsers, "netbee")
+			}
+		}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "ssh_synced": req.SyncRootSSH})
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok":           true,
+		"ssh_synced":   len(syncedUsers) > 0,
+		"synced_users": syncedUsers,
+	})
 }
 
 func (s *Server) handleSystemOverview(w http.ResponseWriter, r *http.Request) {

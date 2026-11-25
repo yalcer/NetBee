@@ -48,12 +48,19 @@ restart() {
 	start
 }
 
+reload() {
+	printf "Reloading %s: " "$DAEMON"
+	if [ -f "$PIDFILE" ] && start-stop-daemon -K -s HUP -q -p "$PIDFILE" -x /usr/bin/netbeed 2>/dev/null; then
+		echo "OK"
+		return 0
+	fi
+	echo "not running, starting"
+	start
+}
+
 case "$1" in
-	start|stop|restart)
+	start|stop|restart|reload)
 		"$1"
-		;;
-	reload)
-		restart
 		;;
 	*)
 		echo "Usage: $0 {start|stop|restart|reload}"

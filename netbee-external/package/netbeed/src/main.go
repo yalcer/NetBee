@@ -170,7 +170,28 @@ func buildHTTPSRedirectURL(r *http.Request, httpsAddr, fallbackHost string) stri
 
 func main() {
 	cfgPath := flag.String("config", "/etc/netbee/netbeed.json", "Path to netbeed JSON config")
+	setPass := flag.Bool("set-password", false, "Read a new Web API password from stdin, write auth.json, and exit")
 	flag.Parse()
+
+	if *setPass {
+		cfg, err := config.LoadRuntimeConfig(*cfgPath)
+		if err != nil {
+			log.Fatalf("load config: %v", err)
+		}
+		authMgr, err := auth.NewManager(cfg.AuthPath)
+		if err != nil {
+			log.Fatalf("init auth manager: %v", err)
+		}
+		raw, err := io.ReadAll(io.LimitReader(os.Stdin, 512))
+		if err != nil {
+			log.Fatalf("read stdin: %v", err)
+		}
+		pw := strings.TrimRight(string(raw), "\r\n")
+		if err := authMgr.SetPasswordDirect(pw); err != nil {
+			log.Fatalf("set password: %v", err)
+		}
+		return
+	}
 
 	if sl, err := syslog.New(syslog.LOG_DAEMON|syslog.LOG_INFO, "netbeed"); err == nil {
 		defer sl.Close()
@@ -197,6 +218,21 @@ func main() {
 
 	appCtx, appCancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer appCancel()
+
+	hupCh := make(chan os.Signal, 1)
+	signal.Notify(hupCh, syscall.SIGHUP)
+	go func() {
+		for {
+			select {
+			case <-appCtx.Done():
+				return
+			case <-hupCh:
+				_ = store.Reload()
+				_ = authMgr.Reload()
+				log.Printf("reloaded state and auth credentials via SIGHUP")
+			}
+		}
+	}()
 
 	apiSrv := api.NewServer(cfg, store, authMgr, version)
 	// Restore persisted runtime interfaces (e.g. WireGuard wg0) after reboot

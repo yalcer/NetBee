@@ -723,8 +723,8 @@ func (s *Server) handleSetLAN(w http.ResponseWriter, r *http.Request) {
 	}
 
 	rawDropbear, _ := os.ReadFile("/etc/default/dropbear")
-	pwAuth, idleSec := ParseDropbearConf(string(rawDropbear))
-	_ = config.AtomicWriteFile("/etc/default/dropbear", []byte(RenderDropbearConf(req.IP, pwAuth, idleSec)), 0644)
+	pwAuth, allowRoot, idleSec := ParseDropbearConfEx(string(rawDropbear))
+	_ = config.AtomicWriteFile("/etc/default/dropbear", []byte(RenderDropbearConfEx(req.IP, pwAuth, allowRoot, idleSec)), 0644)
 
 	host, _ := os.Hostname()
 	_ = config.AtomicWriteFile("/etc/hosts", []byte(renderHostsFile(req.IP, host)), 0644)

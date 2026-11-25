@@ -5,10 +5,12 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"os"
 	"os/exec"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/yalcer/netbee/netbeed/internal/sys"
@@ -137,6 +139,17 @@ func (m *iperfServerManager) Start(bindIP string, port, durationSec int, lanIf, 
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cmd := exec.CommandContext(ctx, "iperf3", "-s", "-p", strconv.Itoa(port), "-B", bindIP)
+	// Drop root privileges to the pre-created 'iperf' system user (UID 110) when running on NetBee OS
+	if os.Geteuid() == 0 {
+		if u, ok := lookupPasswdUser("iperf"); ok && u.UID > 0 && u.GID > 0 {
+			cmd.SysProcAttr = &syscall.SysProcAttr{
+				Credential: &syscall.Credential{
+					Uid: uint32(u.UID),
+					Gid: uint32(u.GID),
+				},
+			}
+		}
+	}
 	var errBuf strings.Builder
 	cmd.Stderr = &errBuf
 	if err := cmd.Start(); err != nil {

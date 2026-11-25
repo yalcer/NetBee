@@ -22,18 +22,20 @@ Default credentials on first boot: **`admin` / `netbee`** (`must_change_password
 | `POST` | `/api/v1/auth/login` | `{"username":"admin","password":"..."}` → returns `token`, `csrf_token`, `must_change_password` |
 | `POST` | `/api/v1/auth/logout` | Invalidate session & clear cookie |
 | `GET` | `/api/v1/auth/me` | Current session info |
-| `POST` | `/api/v1/auth/password` | `{"current_password":"...","new_password":"...","sync_root_ssh":true}` |
+| `POST` | `/api/v1/auth/password` | `{"current_password":"...","new_password":"...","sync_root_ssh":true,"sync_netbee_ssh":true}` |
 
 ---
 
-## System, RPi 5 Hardware Telemetry, Sysctl, TLS, Rollback, Logs & Backup
+## System, OS Users, RPi 5 Hardware Telemetry, Sysctl, TLS, Rollback, Logs & Backup
 
 | Method | Endpoint | Description |
 | :--- | :--- | :--- |
 | `GET` | `/api/v1/system/overview` | OS release, board model, hostname, uptime, load, CPU cores/MHz/governor/temp, PWM fan RPM, cooling state, undervoltage alarm, RAM, conntrack count/max, `rootfs_expanded`, disks (`/`, `/var/log`, `/boot`), services, pending commit |
 | `GET` | `/api/v1/system/stream` | **SSE stream** (2s interval): live `cpu_pct`, `cpu_freq_mhz`, RAM, temp, `fan_rpm`, `undervoltage`, `conntrack_count`, per-interface `rx_bps` / `tx_bps` |
-| `GET` | `/api/v1/system/services` | Status, PID, description & supported `actions` of all 16 OS services (`netbeed`, `adguardhome`, `nftables`, `nft-offload`, `sqm`, `dropbear`, `chronyd`, `dhcpcd`, `pppd`, `radvd`, `vnstatd`, `watchdog`, `triggerhappy`, `crond`, `syslogd`, `klogd`, `udevd`) |
+| `GET` | `/api/v1/system/services` | Status, PID, description & supported `actions` of all 17 OS services (`netbeed`, `adguardhome`, `nftables`, `nft-offload`, `sqm`, `dropbear`, `chronyd`, `dhcpcd`, `pppd`, `radvd`, `vnstatd`, `watchdog`, `triggerhappy`, `crond`, `syslogd`, `klogd`, `udevd`) |
 | `POST` | `/api/v1/system/services/{name}/{action}` | `action`: `start`, `stop`, `restart`, `reload` (`netbeed` `stop` is blocked to prevent lockout) |
+| `GET` | `/api/v1/system/users` | List pre-created OS accounts (`root`, `netbee` admin UID 1000, `iperf`/`chrony`/`dhcpcd` service users), groups & SSH key counts |
+| `PUT` | `/api/v1/system/users/{username}/password` | Update OS console/SSH password (`{"password":"..."}`) for interactive accounts (`root` or `netbee`) |
 | `PUT` | `/api/v1/system/hostname` | `{"hostname":"netbee"}` (updates `/etc/hostname`, kernel hostname & `/etc/hosts`) |
 | `GET` | `/api/v1/system/timezones` | Installed tzdata zones on device + `current` timezone |
 | `PUT` | `/api/v1/system/timezone` | `{"timezone":"Europe/Istanbul"}` |
@@ -137,8 +139,8 @@ Default credentials on first boot: **`admin` / `netbee`** (`must_change_password
 | :--- | :--- | :--- |
 | `GET` / `PUT` | `/api/v1/services/ntp` | Chrony tracking/sources & IPv4/IPv6 server list + `serve_lan` toggle |
 | `GET` / `PUT` | `/api/v1/services/ipv6` | Toggle `radvd` LAN SLAAC & `dhcpcd` IPv6-PD |
-| `GET` / `PUT` | `/api/v1/services/ssh` | Dropbear `password_auth`, `idle_timeout`, and `authorized_keys` |
-| `POST` / `DELETE` | `/api/v1/services/ssh/keys` (`/{index}`) | Add/remove SSH public keys in `/root/.ssh/authorized_keys` |
+| `GET` / `PUT` | `/api/v1/services/ssh` | Dropbear `password_auth` (`-s`), `allow_root_login` (`-w`), `idle_timeout` (`-I`), and per-user `authorized_keys` (`?user=root\|netbee` + `users_keys`) |
+| `POST` / `DELETE` | `/api/v1/services/ssh/keys` (`/{index}`) | Add/remove SSH public keys for `root` or `netbee` (`{"user":"netbee","public_key":"..."}` / `?user=netbee`) |
 | `GET` | `/api/v1/services/cron` | List scheduled jobs, `crond_running` status, built-in `system_jobs` & whitelisted `supported_actions` |
 | `POST` | `/api/v1/services/cron` | Create scheduled task (`schedule`: 5-field cron, `action`: `reboot` \| `wan_reconnect` \| `firewall_reload` \| `sqm_start` \| `sqm_stop` \| `logs_rotate` \| `conntrack_flush` \| `service_restart`) |
 | `PUT` / `DELETE` | `/api/v1/services/cron/{id}` | Update/enable/disable or remove scheduled task |
