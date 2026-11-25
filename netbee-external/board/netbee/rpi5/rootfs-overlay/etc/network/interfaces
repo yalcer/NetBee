@@ -1,0 +1,36 @@
+# NetBee OS Network Interfaces
+# eth0 : Built-in Raspberry Pi 5 Gigabit Ethernet (LAN)
+# eth1 : USB-Ethernet or PCIe Ethernet Adapter (WAN)
+
+auto lo
+iface lo inet loopback
+
+# LAN Interface (Static Router IP)
+auto eth0
+iface eth0 inet static
+    address 192.168.10.1
+    netmask 255.255.255.0
+
+# WAN Interface (DHCP by default)
+# To switch to PPPoE, comment 'iface eth1 inet dhcp' and uncomment the manual+pppd block below.
+allow-hotplug eth1
+auto eth1
+iface eth1 inet dhcp
+
+# --- PPPoE WAN Example (Bridge Modem) ---
+# auto eth1
+# iface eth1 inet manual
+#     up ip link set eth1 up
+#     up pppd call wan-pppoe
+#     down killall pppd || true
+
+# --- Direct Fiber ONT + VLAN 35 + PPPoE Example (FTTH) ---
+# auto eth1
+# iface eth1 inet manual
+#     up ip link set eth1 up
+#     up ip link add link eth1 name eth1.35 type vlan id 35
+#     up ip link set eth1.35 up
+#     up pppd call wan-pppoe
+#     down killall pppd || true
+#     down ip link del eth1.35 || true
+

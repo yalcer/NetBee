@@ -1,0 +1,18 @@
+# NetBee OS - PPPoE WAN Peer Configuration
+# Edit username here and set matching password in /etc/ppp/pap-secrets
+plugin rp-pppoe.so eth1
+user "isp-username@isp.com"
+noauth
+defaultroute
+replacedefaultroute
+usepeerdns
+persist
+maxfail 0
+holdoff 5
+lcp-echo-interval 20
+lcp-echo-failure 3
+mtu 1492
+mru 1492
+noipdefault
+hide-password
+

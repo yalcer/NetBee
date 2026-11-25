@@ -1,0 +1,28 @@
+#!/bin/sh
+# NetBee OS - Quick Router Status Utility
+
+echo "============================================"
+echo "           NetBee OS Status"
+echo "============================================"
+echo "Hostname : $(hostname)"
+echo "Uptime   : $(uptime)"
+if [ -r /sys/class/thermal/thermal_zone0/temp ]; then
+    TEMP=$(awk '{printf "%.1f C", $1/1000}' /sys/class/thermal/thermal_zone0/temp)
+    echo "CPU Temp : $TEMP"
+fi
+echo ""
+echo "--- Network Interfaces ---"
+ip -brief addr show
+echo ""
+echo "--- Default Route ---"
+ip route show default
+echo ""
+echo "--- Services ---"
+for svc in AdGuardHome dropbear chronyd vnstatd pppd; do
+    if pidof "$svc" >/dev/null 2>&1; then
+        echo "  [UP]   $svc"
+    else
+        echo "  [DOWN] $svc"
+    fi
+done
+echo "============================================"
