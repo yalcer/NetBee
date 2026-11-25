@@ -241,6 +241,7 @@ func (s *Server) mutateAndApplyFirewall(reason string, mutate func(*config.Firew
 	if fw.FlowOffload {
 		_, _ = sys.Run(5*time.Second, "/etc/init.d/S42nft-offload", "start")
 	}
+	s.iperfSrv.ReapplyFirewallRules()
 	return nil
 }
 
@@ -592,6 +593,7 @@ func (s *Server) handleSetFirewallRaw(w http.ResponseWriter, r *http.Request) {
 	if s.Store.Get().Firewall.FlowOffload {
 		_, _ = sys.Run(5*time.Second, "/etc/init.d/S42nft-offload", "start")
 	}
+	s.iperfSrv.ReapplyFirewallRules()
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "pending_commit": s.Rollback.Status()})
 }
 
@@ -634,6 +636,7 @@ func (s *Server) handleReloadFirewall(w http.ResponseWriter, r *http.Request) {
 	if s.Store.Get().Firewall.FlowOffload {
 		_, _ = sys.Run(5*time.Second, "/etc/init.d/S42nft-offload", "start")
 	}
+	s.iperfSrv.ReapplyFirewallRules()
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
