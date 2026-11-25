@@ -1,0 +1,3 @@
+# Bind Dropbear SSH strictly to LAN IP (accessible from LAN and WireGuard, never WAN)
+# Disconnect idle SSH sessions after 10 minutes (600s)
+DROPBEAR_ARGS="-p 192.168.10.1:22 -I 600"

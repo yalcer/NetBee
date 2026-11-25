@@ -1,0 +1,13 @@
+# NetBee OS - Raspberry Pi 5 Headless Firewall/Router Boot Config
+
+kernel=Image
+disable_overscan=1
+
+# Disable unused wireless & audio hardware on dedicated wired firewall
+dtoverlay=disable-wifi
+dtoverlay=disable-bt
+dtparam=audio=off
+
+# Enable PCIe interface (for 2.5G PCIe NIC / NVMe HAT) and full USB current (for USB-Ethernet)
+dtparam=pciex1
+usb_max_current_enable=1
