@@ -41,6 +41,7 @@ func newTestServer(t *testing.T, adguardURL string, corsOrigins ...string) (*Ser
 		WebDir:          webDir,
 		StatePath:       filepath.Join(dir, "state.json"),
 		AuthPath:        filepath.Join(dir, "auth.json"),
+		CrontabPath:     filepath.Join(dir, "crontabs", "root"),
 		AdGuardURL:      adguardURL,
 		AdGuardUser:     "admin",
 		AdGuardPass:     "netbee",
@@ -368,6 +369,95 @@ func TestSubsystemIntegrationsWireGuardTLSAndServices(t *testing.T) {
 		h.ServeHTTP(rec, req)
 		if rec.Code != http.StatusOK {
 			t.Fatalf("GET %s failed: %d %s", ep, rec.Code, rec.Body.String())
+		}
+	}
+
+	// Ethtool parser & validator checks
+	sampleEthtool := "Settings for eth0:\n\tSupported link modes:   100baseT/Full\n\t                        1000baseT/Full 2500baseT/Full\n\tSpeed: 2500Mb/s\n\tDuplex: Full\n\tAuto-negotiation: on\n\tSupports Wake-on: pumbg\n\tWake-on: g\n\tLink detected: yes\n"
+	parsedLink := ParseEthtoolSettings(sampleEthtool)
+	if parsedLink["speed"] != "2500Mb/s" || parsedLink["wake_on"] != "g" || parsedLink["link_detected"] != true {
+		t.Fatalf("unexpected ParseEthtoolSettings: %+v", parsedLink)
+	}
+	sampleFeatures := "Features for eth0:\nrx-checksumming: on\ntcp-segmentation-offload: off\nrx-vlan-offload: off [fixed]\n"
+	parsedFeat := ParseEthtoolFeatures(sampleFeatures)
+	if !parsedFeat["rx"].Active || parsedFeat["tso"].Active || !parsedFeat["rxvlan"].Fixed {
+		t.Fatalf("unexpected ParseEthtoolFeatures: %+v", parsedFeat)
+	}
+	if err := ValidateEthtoolConfig(config.EthtoolConfig{Autoneg: false, Speed: 0}); err == nil {
+		t.Fatal("expected error when autoneg=false without speed/duplex")
+	}
+	if err := ValidateEthtoolConfig(config.EthtoolConfig{Autoneg: true, Offloads: map[string]bool{"evil": true}}); err == nil {
+		t.Fatal("expected error for unknown offload key")
+	}
+
+	// Scheduled Tasks (crond) full CRUD + 0600 crontab verification + injection rejection
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/services/cron", bytes.NewBufferString(`{"id":"nightly_wan","name":"Nightly WAN Renew","schedule":"0 4 * * *","action":"wan_reconnect","enabled":true}`))
+	req.Header.Set("Authorization", authHdr)
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("POST /api/v1/services/cron failed: %d %s", rec.Code, rec.Body.String())
+	}
+	cronBytes, err := os.ReadFile(srv.Cfg.CrontabPath)
+	if err != nil || !strings.Contains(string(cronBytes), "logrotate") || !strings.Contains(string(cronBytes), "0 4 * * *") {
+		t.Fatalf("unexpected rendered root crontab: err=%v content=%q", err, string(cronBytes))
+	}
+	cronStat, _ := os.Stat(srv.Cfg.CrontabPath)
+	if cronStat.Mode().Perm() != 0600 {
+		t.Fatalf("expected 0600 crontab mode, got %o", cronStat.Mode().Perm())
+	}
+
+	// Reject arbitrary command / invalid schedule / disallowed service target in cron
+	for _, badCron := range []string{
+		`{"name":"Bad1","schedule":"99 4 * * *","action":"reboot","enabled":true}`,
+		`{"name":"Bad2","schedule":"0 4 * * *","action":"rm -rf /","enabled":true}`,
+		`{"name":"Bad3","schedule":"0 4 * * *","action":"service_restart","target":"netbeed","enabled":true}`,
+	} {
+		req = httptest.NewRequest(http.MethodPost, "/api/v1/services/cron", bytes.NewBufferString(badCron))
+		req.Header.Set("Authorization", authHdr)
+		rec = httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("expected 400 for invalid cron payload %s, got %d", badCron, rec.Code)
+		}
+	}
+
+	// Update & Delete cron job
+	req = httptest.NewRequest(http.MethodPut, "/api/v1/services/cron/nightly_wan", bytes.NewBufferString(`{"name":"Weekly Reboot","schedule":"30 3 * * 0","action":"reboot","enabled":false}`))
+	req.Header.Set("Authorization", authHdr)
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("PUT /api/v1/services/cron/nightly_wan failed: %d %s", rec.Code, rec.Body.String())
+	}
+	cronBytes, _ = os.ReadFile(srv.Cfg.CrontabPath)
+	if strings.Contains(string(cronBytes), "/sbin/reboot") {
+		t.Fatalf("disabled cron job should not appear as active crontab entry:\n%s", string(cronBytes))
+	}
+
+	req = httptest.NewRequest(http.MethodDelete, "/api/v1/services/cron/nightly_wan", nil)
+	req.Header.Set("Authorization", authHdr)
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("DELETE /api/v1/services/cron/nightly_wan failed: %d", rec.Code)
+	}
+
+	// iperf3 server status & port validation guard (port 3000 AdGuardHome and <1024 rejected)
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/diag/iperf3/server", nil)
+	req.Header.Set("Authorization", authHdr)
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"running":false`) {
+		t.Fatalf("GET /api/v1/diag/iperf3/server unexpected: %d %s", rec.Code, rec.Body.String())
+	}
+	for _, badPort := range []string{`{"port":80}`, `{"port":3000}`} {
+		req = httptest.NewRequest(http.MethodPost, "/api/v1/diag/iperf3/server", bytes.NewBufferString(badPort))
+		req.Header.Set("Authorization", authHdr)
+		rec = httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("expected 400 for reserved iperf3 server port %s, got %d", badPort, rec.Code)
 		}
 	}
 }

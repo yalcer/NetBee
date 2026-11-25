@@ -824,6 +824,9 @@ func (s *Server) handleBackupRestore(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = s.Store.Reload()
 	_ = s.Auth.Reload()
+	if jobs := s.Store.Get().CronJobs; len(jobs) > 0 {
+		_ = s.syncRootCrontab(jobs)
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "output": strings.TrimSpace(res.Stdout)})
 }
 

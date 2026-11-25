@@ -30,6 +30,7 @@ type Server struct {
 	Version  string
 	HTTPCli  *http.Client
 	diagSem  chan struct{}
+	iperfSrv *iperfServerManager
 }
 
 func NewServer(cfg config.RuntimeConfig, store *config.Store, authMgr *auth.Manager, version string) *Server {
@@ -41,6 +42,13 @@ func NewServer(cfg config.RuntimeConfig, store *config.Store, authMgr *auth.Mana
 		Version:  version,
 		HTTPCli:  &http.Client{Timeout: 8 * time.Second},
 		diagSem:  make(chan struct{}, 2),
+		iperfSrv: newIperfServerManager(),
+	}
+}
+
+func (s *Server) Close() {
+	if s.iperfSrv != nil {
+		s.iperfSrv.Stop()
 	}
 }
 
@@ -88,8 +96,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/logs/rotate", s.requireAuth(s.handleLogsRotate))
 	mux.HandleFunc("POST /api/v1/logs/clear", s.requireAuth(s.handleLogsClear))
 
-	// Network: Interfaces, Persisted Static Routes, Neighbors, LAN & WAN (DHCP/PPPoE/ONT VLAN/IPv6-PD)
+	// Network: Interfaces, Ethtool, Persisted Static Routes, Neighbors, LAN & WAN (DHCP/PPPoE/ONT VLAN/IPv6-PD)
 	mux.HandleFunc("GET /api/v1/network/interfaces", s.requireAuth(s.handleInterfaces))
+	mux.HandleFunc("GET /api/v1/network/ethtool/{iface}", s.requireAuth(s.handleGetEthtool))
+	mux.HandleFunc("PUT /api/v1/network/ethtool/{iface}", s.requireAuth(s.handleSetEthtool))
 	mux.HandleFunc("GET /api/v1/network/routes", s.requireAuth(s.handleRoutes))
 	mux.HandleFunc("POST /api/v1/network/routes", s.requireAuth(s.handleAddRoute))
 	mux.HandleFunc("DELETE /api/v1/network/routes", s.requireAuth(s.handleDelRoute))
@@ -159,7 +169,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/traffic/vnstat/interface", s.requireAuth(s.handleVnStatIface))
 	mux.HandleFunc("GET /api/v1/traffic/live", s.requireAuth(s.handleLiveTraffic))
 
-	// NTP (Chrony), IPv6 (radvd/dhcpcd) & SSH (Dropbear)
+	// NTP (Chrony), IPv6 (radvd/dhcpcd), SSH (Dropbear) & Scheduled Tasks (crond)
 	mux.HandleFunc("GET /api/v1/services/ntp", s.requireAuth(s.handleGetNTP))
 	mux.HandleFunc("PUT /api/v1/services/ntp", s.requireAuth(s.handleSetNTP))
 	mux.HandleFunc("GET /api/v1/services/ipv6", s.requireAuth(s.handleGetIPv6))
@@ -168,11 +178,18 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("PUT /api/v1/services/ssh", s.requireAuth(s.handleSetSSH))
 	mux.HandleFunc("POST /api/v1/services/ssh/keys", s.requireAuth(s.handleAddSSHKey))
 	mux.HandleFunc("DELETE /api/v1/services/ssh/keys/{index}", s.requireAuth(s.handleDelSSHKey))
+	mux.HandleFunc("GET /api/v1/services/cron", s.requireAuth(s.handleGetCron))
+	mux.HandleFunc("POST /api/v1/services/cron", s.requireAuth(s.handleAddCron))
+	mux.HandleFunc("PUT /api/v1/services/cron/{id}", s.requireAuth(s.handleUpdateCron))
+	mux.HandleFunc("DELETE /api/v1/services/cron/{id}", s.requireAuth(s.handleDelCron))
 
-	// Diagnostics
+	// Diagnostics & Temporary Local iperf3 Benchmark Server
 	mux.HandleFunc("POST /api/v1/diag/ping", s.requireAuth(s.handleDiagPing))
 	mux.HandleFunc("POST /api/v1/diag/mtr", s.requireAuth(s.handleDiagMTR))
 	mux.HandleFunc("POST /api/v1/diag/iperf3", s.requireAuth(s.handleDiagIperf3))
+	mux.HandleFunc("GET /api/v1/diag/iperf3/server", s.requireAuth(s.handleGetIperf3Server))
+	mux.HandleFunc("POST /api/v1/diag/iperf3/server", s.requireAuth(s.handleStartIperf3Server))
+	mux.HandleFunc("DELETE /api/v1/diag/iperf3/server", s.requireAuth(s.handleStopIperf3Server))
 	mux.HandleFunc("POST /api/v1/diag/dns", s.requireAuth(s.handleDiagDNS))
 	mux.HandleFunc("POST /api/v1/diag/capture", s.requireAuth(s.handleDiagCapture))
 
@@ -255,6 +272,10 @@ func (s *Server) RestoreRuntimeOnBoot() {
 	st := s.Store.Get()
 	if _, err := os.Stat(nftVarsPath); err == nil {
 		_ = syncNetIfConfigs(st)
+	}
+	restorePersistedEthtool(st.Ethtool)
+	if len(st.CronJobs) > 0 {
+		_ = s.syncRootCrontab(st.CronJobs)
 	}
 	if st.WireGuard.Enabled && st.WireGuard.PrivateKey != "" {
 		if err := applyWireGuard(st.WireGuard); err != nil {

@@ -376,3 +376,309 @@ func (s *Server) handleDelSSHKey(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "count": len(next)})
 }
+
+// --- Scheduled Tasks (BusyBox crond: /etc/cron/crontabs/root) ---
+
+const (
+	rootCrontabPath   = "/etc/cron/crontabs/root"
+	systemLogrotateJob = "0 * * * * /usr/sbin/logrotate /etc/logrotate.conf >/dev/null 2>&1"
+)
+
+type CronActionSpec struct {
+	Action      string `json:"action"`
+	Description string `json:"description"`
+	NeedsTarget bool   `json:"needs_target"`
+}
+
+var SupportedCronActions = []CronActionSpec{
+	{"reboot", "Reboot the router cleanly", false},
+	{"wan_reconnect", "Reconnect WAN (renew DHCP or redial PPPoE/ONT)", false},
+	{"firewall_reload", "Reload nftables firewall ruleset", false},
+	{"sqm_start", "Enable/restart SQM CAKE traffic shaping", false},
+	{"sqm_stop", "Stop SQM CAKE and re-enable gigabit flow offload", false},
+	{"logs_rotate", "Force immediate RAM syslog rotation", false},
+	{"conntrack_flush", "Flush active NAT/conntrack session table", false},
+	{"service_restart", "Restart a specific managed service (set target)", true},
+}
+
+var cronControllableServices = map[string]string{
+	"adguardhome": "/etc/init.d/S85adguardhome",
+	"chronyd":     "/etc/init.d/S49chronyd",
+	"dhcpcd":      "/etc/init.d/S41dhcpcd",
+	"dropbear":    "/etc/init.d/S50dropbear",
+	"radvd":       "/etc/init.d/S50radvd",
+	"vnstatd":     "/etc/init.d/S86vnstatd",
+	"sqm":         "/etc/init.d/S45sqm",
+	"nftables":    "/etc/init.d/S35nftables",
+	"nft-offload": "/etc/init.d/S42nft-offload",
+}
+
+func validateCronField(tok string, minVal, maxVal int) error {
+	for _, part := range strings.Split(tok, ",") {
+		if part == "" {
+			return fmt.Errorf("empty cron list element")
+		}
+		base, stepStr, hasStep := strings.Cut(part, "/")
+		if hasStep {
+			step, err := strconv.Atoi(stepStr)
+			if err != nil || step < 1 || step > maxVal {
+				return fmt.Errorf("invalid cron step %q", stepStr)
+			}
+		}
+		if base == "*" {
+			continue
+		}
+		if startStr, endStr, isRange := strings.Cut(base, "-"); isRange {
+			a, errA := strconv.Atoi(startStr)
+			b, errB := strconv.Atoi(endStr)
+			if errA != nil || errB != nil || a < minVal || b > maxVal || a > b {
+				return fmt.Errorf("invalid cron range %q", base)
+			}
+			continue
+		}
+		n, err := strconv.Atoi(base)
+		if err != nil || n < minVal || n > maxVal {
+			return fmt.Errorf("cron value %q out of bounds (%d..%d)", base, minVal, maxVal)
+		}
+	}
+	return nil
+}
+
+// ValidateCronSchedule strictly validates a standard 5-field cron expression ("min hour dom month dow").
+func ValidateCronSchedule(expr string) error {
+	if strings.ContainsAny(expr, "\n\r\x00#;") {
+		return fmt.Errorf("cron schedule contains forbidden characters")
+	}
+	fields := strings.Fields(expr)
+	if len(fields) != 5 {
+		return fmt.Errorf("cron schedule must have exactly 5 fields (minute hour day month weekday)")
+	}
+	bounds := [5][2]int{{0, 59}, {0, 23}, {1, 31}, {1, 12}, {0, 7}}
+	for i, f := range fields {
+		if err := validateCronField(f, bounds[i][0], bounds[i][1]); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// ResolveCronActionCommand maps a whitelisted router action to a fixed, injection-free command string.
+func ResolveCronActionCommand(action, target string) (string, error) {
+	switch action {
+	case "reboot":
+		return "/sbin/reboot", nil
+	case "wan_reconnect":
+		return `/bin/sh -c '. /etc/netbee/netif.env 2>/dev/null; if [ "$WAN_MODE" = "pppoe" ] || [ "$WAN_MODE" = "ont_vlan" ]; then killall pppd 2>/dev/null; pppd call wan-pppoe; else /etc/init.d/S41dhcpcd restart; fi'`, nil
+	case "firewall_reload":
+		return "/etc/init.d/S35nftables reload", nil
+	case "sqm_start":
+		return "/usr/sbin/netbee-sqm restart", nil
+	case "sqm_stop":
+		return "/bin/sh -c '/usr/sbin/netbee-sqm stop && /etc/init.d/S42nft-offload start'", nil
+	case "logs_rotate":
+		return "/usr/sbin/logrotate -f /etc/logrotate.conf", nil
+	case "conntrack_flush":
+		return "/usr/sbin/conntrack -F", nil
+	case "service_restart":
+		script, ok := cronControllableServices[target]
+		if !ok {
+			return "", fmt.Errorf("unsupported service target %q for service_restart", target)
+		}
+		return script + " restart", nil
+	default:
+		return "", fmt.Errorf("unsupported cron action %q", action)
+	}
+}
+
+func validateCronJob(job *config.CronJob) error {
+	if job.ID == "" || !sys.ValidID(job.ID) {
+		return fmt.Errorf("invalid cron job id")
+	}
+	job.Name = strings.TrimSpace(job.Name)
+	if job.Name == "" || len(job.Name) > 64 || !sys.ValidSafeString(job.Name) {
+		return fmt.Errorf("invalid cron job name")
+	}
+	job.Schedule = strings.Join(strings.Fields(job.Schedule), " ")
+	if err := ValidateCronSchedule(job.Schedule); err != nil {
+		return err
+	}
+	if _, err := ResolveCronActionCommand(job.Action, job.Target); err != nil {
+		return err
+	}
+	if job.Action != "service_restart" {
+		job.Target = ""
+	}
+	return nil
+}
+
+// RenderRootCrontab generates /etc/cron/crontabs/root preserving the mandatory hourly RAM logrotate safeguard.
+func RenderRootCrontab(jobs []config.CronJob) (string, error) {
+	var b strings.Builder
+	b.WriteString("# Managed by NetBee OS (netbeed) - Periodic maintenance & user schedules\n")
+	b.WriteString(systemLogrotateJob + "\n")
+	for _, j := range jobs {
+		if err := validateCronJob(&j); err != nil {
+			return "", err
+		}
+		if !j.Enabled {
+			continue
+		}
+		cmd, err := ResolveCronActionCommand(j.Action, j.Target)
+		if err != nil {
+			return "", err
+		}
+		fmt.Fprintf(&b, "# [%s] %s\n%s %s >/dev/null 2>&1\n", j.ID, j.Name, j.Schedule, cmd)
+	}
+	return b.String(), nil
+}
+
+func (s *Server) crontabPath() string {
+	if s.Cfg.CrontabPath != "" {
+		return s.Cfg.CrontabPath
+	}
+	return rootCrontabPath
+}
+
+func (s *Server) syncRootCrontab(jobs []config.CronJob) error {
+	rendered, err := RenderRootCrontab(jobs)
+	if err != nil {
+		return err
+	}
+	if err := config.AtomicWriteFile(s.crontabPath(), []byte(rendered), 0600); err != nil {
+		return err
+	}
+	if _, err := os.Stat("/etc/init.d/S50crond"); err == nil {
+		_, _ = sys.Run(5*time.Second, "/etc/init.d/S50crond", "reload")
+	}
+	return nil
+}
+
+func (s *Server) handleGetCron(w http.ResponseWriter, r *http.Request) {
+	crondRunning := false
+	if _, err := sys.Run(2*time.Second, "pidof", "crond"); err == nil {
+		crondRunning = true
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"crond_running":     crondRunning,
+		"system_jobs":       []string{systemLogrotateJob},
+		"jobs":              s.Store.Get().CronJobs,
+		"supported_actions": SupportedCronActions,
+	})
+}
+
+func (s *Server) handleAddCron(w http.ResponseWriter, r *http.Request) {
+	var job config.CronJob
+	if err := decodeJSON(r, &job); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid json body")
+		return
+	}
+	if job.ID == "" {
+		job.ID = fmt.Sprintf("cron%d", time.Now().UnixMilli())
+	}
+	if err := validateCronJob(&job); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	var allJobs []config.CronJob
+	if err := s.Store.Update(func(st *config.State) error {
+		if len(st.CronJobs) >= 32 {
+			return fmt.Errorf("maximum of 32 scheduled jobs reached")
+		}
+		for _, existing := range st.CronJobs {
+			if existing.ID == job.ID {
+				return fmt.Errorf("duplicate cron job id: %s", job.ID)
+			}
+		}
+		st.CronJobs = append(st.CronJobs, job)
+		allJobs = append([]config.CronJob{}, st.CronJobs...)
+		return nil
+	}); err != nil {
+		status := http.StatusBadRequest
+		if strings.Contains(err.Error(), "duplicate") {
+			status = http.StatusConflict
+		}
+		writeErr(w, status, err.Error())
+		return
+	}
+	if err := s.syncRootCrontab(allJobs); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{"ok": true, "job": job})
+}
+
+func (s *Server) handleUpdateCron(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	var job config.CronJob
+	if err := decodeJSON(r, &job); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid json body")
+		return
+	}
+	job.ID = id
+	if err := validateCronJob(&job); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	found := false
+	var allJobs []config.CronJob
+	if err := s.Store.Update(func(st *config.State) error {
+		for i, existing := range st.CronJobs {
+			if existing.ID == id {
+				st.CronJobs[i] = job
+				found = true
+				break
+			}
+		}
+		if !found {
+			return fmt.Errorf("cron job not found")
+		}
+		allJobs = append([]config.CronJob{}, st.CronJobs...)
+		return nil
+	}); err != nil {
+		if !found {
+			writeErr(w, http.StatusNotFound, "cron job not found")
+			return
+		}
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if err := s.syncRootCrontab(allJobs); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "job": job})
+}
+
+func (s *Server) handleDelCron(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	found := false
+	var allJobs []config.CronJob
+	if err := s.Store.Update(func(st *config.State) error {
+		next := make([]config.CronJob, 0, len(st.CronJobs))
+		for _, item := range st.CronJobs {
+			if item.ID == id {
+				found = true
+				continue
+			}
+			next = append(next, item)
+		}
+		if !found {
+			return fmt.Errorf("cron job not found")
+		}
+		st.CronJobs = next
+		allJobs = append([]config.CronJob{}, st.CronJobs...)
+		return nil
+	}); err != nil {
+		if !found {
+			writeErr(w, http.StatusNotFound, "cron job not found")
+			return
+		}
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if err := s.syncRootCrontab(allJobs); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}

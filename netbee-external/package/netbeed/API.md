@@ -53,11 +53,12 @@ Default credentials on first boot: **`admin` / `netbee`** (`must_change_password
 
 ---
 
-## Network (Interfaces, Persisted Static Routes, Neighbors, LAN & WAN)
+## Network (Interfaces, Ethtool, Persisted Static Routes, Neighbors, LAN & WAN)
 
 | Method | Endpoint | Description |
 | :--- | :--- | :--- |
 | `GET` | `/api/v1/network/interfaces` | `ip -j -s addr show` enriched with `ethtool` speed/duplex/link |
+| `GET` / `PUT` | `/api/v1/network/ethtool/{iface}` | Read/configure NIC link speed, duplex, autoneg, Wake-on-LAN (`wol`: `d`/`g`) & hardware offloads (`rx`, `tx`, `sg`, `tso`, `gso`, `gro`, `rxvlan`, `txvlan`) — persisted across reboots (60s rollback guard on manual LAN speed/duplex) |
 | `GET` | `/api/v1/network/routes` | Live IPv4 & IPv6 routing tables (`ip -j route`) + persisted `static_routes` |
 | `POST` | `/api/v1/network/routes` | Apply & persist static route: `{"destination":"10.20.0.0/24","gateway":"192.168.10.2","device":"eth0","metric":100}` |
 | `DELETE` | `/api/v1/network/routes` (`/{id}`) | Delete static route by `{id}` or `{"destination":"10.20.0.0/24"}` |
@@ -130,7 +131,7 @@ Default credentials on first boot: **`admin` / `netbee`** (`must_change_password
 
 ---
 
-## NTP, IPv6, SSH & Diagnostics
+## NTP, IPv6, SSH, Scheduled Tasks (`crond`) & Diagnostics
 
 | Method | Endpoint | Description |
 | :--- | :--- | :--- |
@@ -138,8 +139,12 @@ Default credentials on first boot: **`admin` / `netbee`** (`must_change_password
 | `GET` / `PUT` | `/api/v1/services/ipv6` | Toggle `radvd` LAN SLAAC & `dhcpcd` IPv6-PD |
 | `GET` / `PUT` | `/api/v1/services/ssh` | Dropbear `password_auth`, `idle_timeout`, and `authorized_keys` |
 | `POST` / `DELETE` | `/api/v1/services/ssh/keys` (`/{index}`) | Add/remove SSH public keys in `/root/.ssh/authorized_keys` |
+| `GET` | `/api/v1/services/cron` | List scheduled jobs, `crond_running` status, built-in `system_jobs` & whitelisted `supported_actions` |
+| `POST` | `/api/v1/services/cron` | Create scheduled task (`schedule`: 5-field cron, `action`: `reboot` \| `wan_reconnect` \| `firewall_reload` \| `sqm_start` \| `sqm_stop` \| `logs_rotate` \| `conntrack_flush` \| `service_restart`) |
+| `PUT` / `DELETE` | `/api/v1/services/cron/{id}` | Update/enable/disable or remove scheduled task |
 | `POST` | `/api/v1/diag/ping` | `{"host":"1.1.1.1","count":4}` |
 | `POST` | `/api/v1/diag/mtr` | `{"host":"1.1.1.1","cycles":5}` → native `mtr -j` JSON |
-| `POST` | `/api/v1/diag/iperf3` | `{"host":"...","port":5201,"duration":5,"reverse":false}` → native `iperf3 -J` JSON |
+| `POST` | `/api/v1/diag/iperf3` | Client benchmark: `{"host":"...","port":5201,"duration":5,"reverse":false}` → native `iperf3 -J` JSON |
+| `GET` / `POST` / `DELETE` | `/api/v1/diag/iperf3/server` | Inspect, start (`{"port":5201,"duration_seconds":300}` — auto-opens LAN/WG firewall & auto-stops after TTL), or stop temporary local `iperf3 -s` benchmark server |
 | `POST` | `/api/v1/diag/dns` | `{"host":"example.com","server":"127.0.0.1"}` |
 | `POST` | `/api/v1/diag/capture` | Safe bounded `tcpdump`: `{"interface":"eth0","count":20,"proto":"tcp","port":443}` |
