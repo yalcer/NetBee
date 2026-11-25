@@ -2,6 +2,7 @@ package api
 
 import (
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"strconv"
@@ -11,6 +12,17 @@ import (
 	"github.com/yalcer/netbee/netbeed/internal/config"
 	"github.com/yalcer/netbee/netbeed/internal/sys"
 )
+
+func lanCIDR(lan config.LANState) string {
+	ip := net.ParseIP(lan.IP).To4()
+	maskIP := net.ParseIP(lan.Netmask).To4()
+	if ip == nil || maskIP == nil {
+		return "192.168.10.0/24"
+	}
+	mask := net.IPv4Mask(maskIP[0], maskIP[1], maskIP[2], maskIP[3])
+	ones, _ := mask.Size()
+	return fmt.Sprintf("%s/%d", ip.Mask(mask).String(), ones)
+}
 
 // --- NTP (Chrony) ---
 
@@ -62,7 +74,7 @@ func (s *Server) handleSetNTP(w http.ResponseWriter, r *http.Request) {
 	}
 	b.WriteString("driftfile /var/lib/chrony/drift\nmakestep 1.0 -1\nrtcsync\n")
 	if req.ServeLAN {
-		b.WriteString("allow 192.168.10.0/24\nlocal stratum 10\n")
+		fmt.Fprintf(&b, "allow %s\nlocal stratum 10\n", lanCIDR(s.Store.Get().LAN))
 	}
 	if err := config.AtomicWriteFile("/etc/chrony.conf", []byte(b.String()), 0644); err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
@@ -214,7 +226,16 @@ func (s *Server) handleDelSSHKey(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid key index")
 		return
 	}
-	next := append(keys[:idx], keys[idx+1:]...)
+	// Prevent total SSH lockout if password auth (-s) is disabled and this is the last key
+	if len(keys) == 1 {
+		if def, err := os.ReadFile("/etc/default/dropbear"); err == nil && strings.Contains(string(def), "-s") {
+			writeErr(w, http.StatusBadRequest, "cannot remove last SSH key while password authentication is disabled")
+			return
+		}
+	}
+	next := make([]string, 0, len(keys)-1)
+	next = append(next, keys[:idx]...)
+	next = append(next, keys[idx+1:]...)
 	content := ""
 	if len(next) > 0 {
 		content = strings.Join(next, "\n") + "\n"
@@ -225,3 +246,4 @@ func (s *Server) handleDelSSHKey(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "count": len(next)})
 }
+

@@ -2,6 +2,7 @@ package api
 
 import (
 	"fmt"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -12,7 +13,18 @@ import (
 
 const uiNftDropInPath = "/etc/nftables.d/10-ui-rules.nft"
 
-// RenderCustomNFT generates /etc/nftables.d/10-ui-rules.nft from FirewallState.
+func isIPv6Addr(s string) bool {
+	if ip := net.ParseIP(s); ip != nil {
+		return ip.To4() == nil
+	}
+	if ip, _, err := net.ParseCIDR(s); err == nil {
+		return ip.To4() == nil
+	}
+	return false
+}
+
+// RenderCustomNFT generates /etc/nftables.d/10-ui-rules.nft targeting custom_input and custom_forward
+// (evaluated BEFORE default LAN->WAN accept so both custom drop/reject and accept rules take effect).
 func RenderCustomNFT(fw config.FirewallState, lanIP string) string {
 	if lanIP == "" {
 		lanIP = "192.168.10.1"
@@ -21,7 +33,7 @@ func RenderCustomNFT(fw config.FirewallState, lanIP string) string {
 	b.WriteString("# Managed by NetBee OS (netbeed) - Custom Rules, DNAT & Toggles\n")
 
 	if fw.ExposeWireGuard && sys.ValidPort(fw.WireGuardPort) {
-		fmt.Fprintf(&b, "add rule inet netbee_fw input iifname $WAN_IFS udp dport %d accept\n", fw.WireGuardPort)
+		fmt.Fprintf(&b, "add rule inet netbee_fw custom_input iifname $WAN_IFS udp dport %d accept\n", fw.WireGuardPort)
 	}
 
 	if fw.TransparentDNS {
@@ -42,17 +54,28 @@ func RenderCustomNFT(fw config.FirewallState, lanIP string) string {
 			if pf.SourceCIDR != "" {
 				src = fmt.Sprintf("ip saddr %s ", pf.SourceCIDR)
 			}
-			// DNAT in prerouting + matching forward accept
-			fmt.Fprintf(&b, "add rule ip netbee_nat prerouting iifname $WAN_IFS %s%s dport %s dnat to %s:%d\n",
-				src, proto, pf.ExtPort, pf.IntIP, pf.IntPort)
-			fmt.Fprintf(&b, "add rule inet netbee_fw forward iifname $WAN_IFS %sip daddr %s %s dport %d accept\n",
-				src, pf.IntIP, proto, pf.IntPort)
+			// IntPort == 0 preserves external port or range 1:1
+			if pf.IntPort > 0 {
+				fmt.Fprintf(&b, "add rule ip netbee_nat prerouting iifname $WAN_IFS %s%s dport %s dnat to %s:%d\n",
+					src, proto, pf.ExtPort, pf.IntIP, pf.IntPort)
+				fmt.Fprintf(&b, "add rule inet netbee_fw custom_forward iifname $WAN_IFS %sip daddr %s %s dport %d accept\n",
+					src, pf.IntIP, proto, pf.IntPort)
+			} else {
+				fmt.Fprintf(&b, "add rule ip netbee_nat prerouting iifname $WAN_IFS %s%s dport %s dnat to %s\n",
+					src, proto, pf.ExtPort, pf.IntIP)
+				fmt.Fprintf(&b, "add rule inet netbee_fw custom_forward iifname $WAN_IFS %sip daddr %s %s dport %s accept\n",
+					src, pf.IntIP, proto, pf.ExtPort)
+			}
 		}
 	}
 
 	for _, rule := range fw.CustomRules {
 		if !rule.Enabled {
 			continue
+		}
+		chain := "custom_input"
+		if rule.Chain == "forward" {
+			chain = "custom_forward"
 		}
 		var parts []string
 		if rule.InIface != "" {
@@ -61,11 +84,22 @@ func RenderCustomNFT(fw config.FirewallState, lanIP string) string {
 		if rule.OutIface != "" && rule.Chain == "forward" {
 			parts = append(parts, fmt.Sprintf("oifname %q", rule.OutIface))
 		}
+		v6 := false
 		if rule.SrcAddr != "" {
-			parts = append(parts, fmt.Sprintf("ip saddr %s", rule.SrcAddr))
+			if isIPv6Addr(rule.SrcAddr) {
+				v6 = true
+				parts = append(parts, fmt.Sprintf("ip6 saddr %s", rule.SrcAddr))
+			} else {
+				parts = append(parts, fmt.Sprintf("ip saddr %s", rule.SrcAddr))
+			}
 		}
 		if rule.DstAddr != "" {
-			parts = append(parts, fmt.Sprintf("ip daddr %s", rule.DstAddr))
+			if isIPv6Addr(rule.DstAddr) {
+				v6 = true
+				parts = append(parts, fmt.Sprintf("ip6 daddr %s", rule.DstAddr))
+			} else {
+				parts = append(parts, fmt.Sprintf("ip daddr %s", rule.DstAddr))
+			}
 		}
 		if rule.Protocol == "tcp" || rule.Protocol == "udp" {
 			if rule.DstPort != "" {
@@ -74,13 +108,17 @@ func RenderCustomNFT(fw config.FirewallState, lanIP string) string {
 				parts = append(parts, fmt.Sprintf("meta l4proto %s", rule.Protocol))
 			}
 		} else if rule.Protocol == "icmp" {
-			parts = append(parts, "ip protocol icmp")
+			if v6 {
+				parts = append(parts, "ip6 nexthdr icmpv6")
+			} else {
+				parts = append(parts, "ip protocol icmp")
+			}
 		}
 		if rule.Log {
 			parts = append(parts, fmt.Sprintf(`limit rate 10/minute log prefix "netbee-%s: "`, rule.ID))
 		}
 		parts = append(parts, rule.Action)
-		fmt.Fprintf(&b, "add rule inet netbee_fw %s %s\n", rule.Chain, strings.Join(parts, " "))
+		fmt.Fprintf(&b, "add rule inet netbee_fw %s %s\n", chain, strings.Join(parts, " "))
 	}
 
 	return b.String()
@@ -111,6 +149,9 @@ func validateFirewallRule(r config.FirewallRule) error {
 	if r.DstAddr != "" && !sys.ValidIPOrCIDR(r.DstAddr) {
 		return fmt.Errorf("invalid dst_addr")
 	}
+	if r.SrcAddr != "" && r.DstAddr != "" && isIPv6Addr(r.SrcAddr) != isIPv6Addr(r.DstAddr) {
+		return fmt.Errorf("src_addr and dst_addr must use the same IP family")
+	}
 	if r.DstPort != "" && !sys.ValidPortSpec(r.DstPort) {
 		return fmt.Errorf("invalid dst_port")
 	}
@@ -128,29 +169,47 @@ func validatePortForward(pf config.PortForward) error {
 		return fmt.Errorf("invalid ext_port")
 	}
 	if !sys.ValidIPv4(pf.IntIP) {
-		return fmt.Errorf("invalid int_ip")
+		return fmt.Errorf("invalid int_ip (IPv4 required)")
 	}
-	if !sys.ValidPort(pf.IntPort) {
-		return fmt.Errorf("invalid int_port")
+	if pf.IntPort != 0 && !sys.ValidPort(pf.IntPort) {
+		return fmt.Errorf("invalid int_port (use 0 to preserve external port/range, or 1..65535)")
 	}
-	if pf.SourceCIDR != "" && !sys.ValidIPOrCIDR(pf.SourceCIDR) {
-		return fmt.Errorf("invalid source_cidr")
+	if pf.SourceCIDR != "" && (!sys.ValidIPOrCIDR(pf.SourceCIDR) || isIPv6Addr(pf.SourceCIDR)) {
+		return fmt.Errorf("invalid source_cidr (IPv4 CIDR required)")
 	}
 	return nil
 }
 
-func (s *Server) applyFirewall(fw config.FirewallState, lanIP string) error {
-	rendered := RenderCustomNFT(fw, lanIP)
+// mutateAndApplyFirewall snapshots state & nft drop-in BEFORE mutating Store, validates via nft -c, and reloads.
+func (s *Server) mutateAndApplyFirewall(reason string, mutate func(*config.FirewallState) error) error {
 	files := []string{uiNftDropInPath, s.Cfg.StatePath}
-	s.Rollback.Begin("Firewall configuration update", time.Duration(s.Cfg.RollbackSeconds)*time.Second, files, func() {
+	s.Rollback.Begin(reason, time.Duration(s.Cfg.RollbackSeconds)*time.Second, files, func() {
+		_ = s.Store.Reload()
 		_, _ = sys.Run(10*time.Second, "/etc/init.d/S35nftables", "reload")
-		_, _ = sys.Run(10*time.Second, "/etc/init.d/S42nft-offload", "start")
+		if s.Store.Get().Firewall.FlowOffload {
+			_, _ = sys.Run(5*time.Second, "/etc/init.d/S42nft-offload", "start")
+		}
 	})
 
-	if err := config.AtomicWriteFile(uiNftDropInPath, []byte(rendered), 0644); err != nil {
+	var fw config.FirewallState
+	var lanIP string
+	if err := s.Store.Update(func(st *config.State) error {
+		if err := mutate(&st.Firewall); err != nil {
+			return err
+		}
+		fw = st.Firewall
+		lanIP = st.LAN.IP
+		return nil
+	}); err != nil {
+		s.Rollback.RevertNow()
 		return err
 	}
-	// Syntax & dry-run check BEFORE reloading live firewall
+
+	rendered := RenderCustomNFT(fw, lanIP)
+	if err := config.AtomicWriteFile(uiNftDropInPath, []byte(rendered), 0644); err != nil {
+		s.Rollback.RevertNow()
+		return err
+	}
 	if _, err := sys.Run(5*time.Second, "nft", "-c", "-f", "/etc/nftables.conf"); err != nil {
 		s.Rollback.RevertNow()
 		return fmt.Errorf("nftables validation failed: %w", err)
@@ -195,31 +254,79 @@ func (s *Server) handleSetFirewallConfig(w http.ResponseWriter, r *http.Request)
 	if req.WireGuardPort == 0 {
 		req.WireGuardPort = 51820
 	}
+	if !sys.ValidPort(req.WireGuardPort) {
+		writeErr(w, http.StatusBadRequest, "invalid wireguard_port")
+		return
+	}
+	seenRules := map[string]bool{}
 	for _, rule := range req.CustomRules {
 		if err := validateFirewallRule(rule); err != nil {
 			writeErr(w, http.StatusBadRequest, err.Error())
 			return
 		}
+		if seenRules[rule.ID] {
+			writeErr(w, http.StatusConflict, "duplicate rule id: "+rule.ID)
+			return
+		}
+		seenRules[rule.ID] = true
 	}
+	seenPF := map[string]bool{}
 	for _, pf := range req.PortForwards {
 		if err := validatePortForward(pf); err != nil {
 			writeErr(w, http.StatusBadRequest, err.Error())
 			return
 		}
+		if seenPF[pf.ID] {
+			writeErr(w, http.StatusConflict, "duplicate port-forward id: "+pf.ID)
+			return
+		}
+		seenPF[pf.ID] = true
 	}
-	lanIP := s.Store.Get().LAN.IP
-	if err := s.Store.Update(func(st *config.State) error {
-		st.Firewall = req
+
+	if err := s.mutateAndApplyFirewall("Firewall configuration update", func(fw *config.FirewallState) error {
+		*fw = req
 		return nil
 	}); err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	if err := s.applyFirewall(req, lanIP); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "pending_commit": s.Rollback.Status()})
+}
+
+func (s *Server) handlePatchFirewallToggles(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		TransparentDNS  *bool `json:"transparent_dns"`
+		ExposeWireGuard *bool `json:"expose_wireguard"`
+		WireGuardPort   *int  `json:"wireguard_port"`
+		FlowOffload     *bool `json:"flow_offload"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid json body")
+		return
+	}
+	if req.WireGuardPort != nil && !sys.ValidPort(*req.WireGuardPort) {
+		writeErr(w, http.StatusBadRequest, "invalid wireguard_port")
+		return
+	}
+	if err := s.mutateAndApplyFirewall("Firewall toggle update", func(fw *config.FirewallState) error {
+		if req.TransparentDNS != nil {
+			fw.TransparentDNS = *req.TransparentDNS
+		}
+		if req.ExposeWireGuard != nil {
+			fw.ExposeWireGuard = *req.ExposeWireGuard
+		}
+		if req.WireGuardPort != nil {
+			fw.WireGuardPort = *req.WireGuardPort
+		}
+		if req.FlowOffload != nil {
+			fw.FlowOffload = *req.FlowOffload
+		}
+		return nil
+	}); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "config": s.Store.Get().Firewall, "pending_commit": s.Rollback.Status()})
 }
 
 func (s *Server) handleAddFirewallRule(w http.ResponseWriter, r *http.Request) {
@@ -235,18 +342,21 @@ func (s *Server) handleAddFirewallRule(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	var fw config.FirewallState
-	lanIP := s.Store.Get().LAN.IP
-	if err := s.Store.Update(func(st *config.State) error {
-		st.Firewall.CustomRules = append(st.Firewall.CustomRules, rule)
-		fw = st.Firewall
+	err := s.mutateAndApplyFirewall("Add firewall rule", func(fw *config.FirewallState) error {
+		for _, existing := range fw.CustomRules {
+			if existing.ID == rule.ID {
+				return fmt.Errorf("duplicate rule id: %s", rule.ID)
+			}
+		}
+		fw.CustomRules = append(fw.CustomRules, rule)
 		return nil
-	}); err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	if err := s.applyFirewall(fw, lanIP); err != nil {
-		writeErr(w, http.StatusBadRequest, err.Error())
+	})
+	if err != nil {
+		status := http.StatusBadRequest
+		if strings.Contains(err.Error(), "duplicate") {
+			status = http.StatusConflict
+		}
+		writeErr(w, status, err.Error())
 		return
 	}
 	writeJSON(w, http.StatusCreated, map[string]any{"ok": true, "rule": rule, "pending_commit": s.Rollback.Status()})
@@ -254,28 +364,28 @@ func (s *Server) handleAddFirewallRule(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleDelFirewallRule(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	var fw config.FirewallState
 	found := false
-	lanIP := s.Store.Get().LAN.IP
-	_ = s.Store.Update(func(st *config.State) error {
-		next := make([]config.FirewallRule, 0, len(st.Firewall.CustomRules))
-		for _, item := range st.Firewall.CustomRules {
+	err := s.mutateAndApplyFirewall("Delete firewall rule", func(fw *config.FirewallState) error {
+		next := make([]config.FirewallRule, 0, len(fw.CustomRules))
+		for _, item := range fw.CustomRules {
 			if item.ID == id {
 				found = true
 				continue
 			}
 			next = append(next, item)
 		}
-		st.Firewall.CustomRules = next
-		fw = st.Firewall
+		if !found {
+			return fmt.Errorf("rule not found")
+		}
+		fw.CustomRules = next
 		return nil
 	})
-	if !found {
-		writeErr(w, http.StatusNotFound, "rule not found")
-		return
-	}
-	if err := s.applyFirewall(fw, lanIP); err != nil {
-		writeErr(w, http.StatusBadRequest, err.Error())
+	if err != nil {
+		status := http.StatusBadRequest
+		if !found {
+			status = http.StatusNotFound
+		}
+		writeErr(w, status, err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "pending_commit": s.Rollback.Status()})
@@ -294,18 +404,21 @@ func (s *Server) handleAddPortForward(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	var fw config.FirewallState
-	lanIP := s.Store.Get().LAN.IP
-	if err := s.Store.Update(func(st *config.State) error {
-		st.Firewall.PortForwards = append(st.Firewall.PortForwards, pf)
-		fw = st.Firewall
+	err := s.mutateAndApplyFirewall("Add port forward", func(fw *config.FirewallState) error {
+		for _, existing := range fw.PortForwards {
+			if existing.ID == pf.ID {
+				return fmt.Errorf("duplicate port-forward id: %s", pf.ID)
+			}
+		}
+		fw.PortForwards = append(fw.PortForwards, pf)
 		return nil
-	}); err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	if err := s.applyFirewall(fw, lanIP); err != nil {
-		writeErr(w, http.StatusBadRequest, err.Error())
+	})
+	if err != nil {
+		status := http.StatusBadRequest
+		if strings.Contains(err.Error(), "duplicate") {
+			status = http.StatusConflict
+		}
+		writeErr(w, status, err.Error())
 		return
 	}
 	writeJSON(w, http.StatusCreated, map[string]any{"ok": true, "port_forward": pf, "pending_commit": s.Rollback.Status()})
@@ -313,28 +426,28 @@ func (s *Server) handleAddPortForward(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleDelPortForward(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	var fw config.FirewallState
 	found := false
-	lanIP := s.Store.Get().LAN.IP
-	_ = s.Store.Update(func(st *config.State) error {
-		next := make([]config.PortForward, 0, len(st.Firewall.PortForwards))
-		for _, item := range st.Firewall.PortForwards {
+	err := s.mutateAndApplyFirewall("Delete port forward", func(fw *config.FirewallState) error {
+		next := make([]config.PortForward, 0, len(fw.PortForwards))
+		for _, item := range fw.PortForwards {
 			if item.ID == id {
 				found = true
 				continue
 			}
 			next = append(next, item)
 		}
-		st.Firewall.PortForwards = next
-		fw = st.Firewall
+		if !found {
+			return fmt.Errorf("port forward not found")
+		}
+		fw.PortForwards = next
 		return nil
 	})
-	if !found {
-		writeErr(w, http.StatusNotFound, "port forward not found")
-		return
-	}
-	if err := s.applyFirewall(fw, lanIP); err != nil {
-		writeErr(w, http.StatusBadRequest, err.Error())
+	if err != nil {
+		status := http.StatusBadRequest
+		if !found {
+			status = http.StatusNotFound
+		}
+		writeErr(w, status, err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "pending_commit": s.Rollback.Status()})
@@ -381,7 +494,7 @@ func (s *Server) handleGetConntrack(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	var flows []map[string]string
+	flows := []map[string]string{}
 	for _, line := range strings.Split(strings.TrimSpace(res.Stdout), "\n") {
 		if line == "" {
 			continue
@@ -405,9 +518,6 @@ func (s *Server) handleGetConntrack(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		flows = append(flows, entry)
-	}
-	if flows == nil {
-		flows = []map[string]string{}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"count": len(flows), "flows": flows})
 }

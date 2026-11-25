@@ -227,11 +227,37 @@ func (s *Server) handleAddWireGuardPeer(w http.ResponseWriter, r *http.Request) 
 
 	var wg config.WireGuardState
 	if err := s.Store.Update(func(st *config.State) error {
+		// Ensure server keypair exists so client_config always has a valid server PublicKey
+		if st.WireGuard.PrivateKey == "" {
+			privRes, err := sys.Run(3*time.Second, "wg", "genkey")
+			if err != nil {
+				return fmt.Errorf("failed to generate server key: %w", err)
+			}
+			priv := strings.TrimSpace(privRes.Stdout)
+			pubRes, err := sys.RunWithInput(3*time.Second, priv+"\n", "wg", "pubkey")
+			if err != nil {
+				return fmt.Errorf("failed to derive server public key: %w", err)
+			}
+			st.WireGuard.PrivateKey = priv
+			st.WireGuard.PublicKey = strings.TrimSpace(pubRes.Stdout)
+		}
+		for _, existing := range st.WireGuard.Peers {
+			if existing.PublicKey == peer.PublicKey {
+				return fmt.Errorf("duplicate peer public_key")
+			}
+			if existing.AllowedIPs == peer.AllowedIPs {
+				return fmt.Errorf("duplicate peer allowed_ips: %s", peer.AllowedIPs)
+			}
+		}
 		st.WireGuard.Peers = append(st.WireGuard.Peers, peer)
 		wg = st.WireGuard
 		return nil
 	}); err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
+		status := http.StatusInternalServerError
+		if strings.Contains(err.Error(), "duplicate") {
+			status = http.StatusConflict
+		}
+		writeErr(w, status, err.Error())
 		return
 	}
 	if wg.Enabled {
@@ -287,3 +313,4 @@ func (s *Server) handleDelWireGuardPeer(w http.ResponseWriter, r *http.Request) 
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
+

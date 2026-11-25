@@ -11,7 +11,7 @@ For local frontend dev servers (e.g. Vite on `http://localhost:5173`), add your 
 ## Authentication
 
 All `/api/v1/*` endpoints (except `/api/v1/health` and `/api/v1/auth/login`) require either:
-- Session cookie `netbee_session` (set automatically on login) + optional `X-CSRF-Token` header, **or**
+- Session cookie `netbee_session` (set automatically on login) **plus required** `X-CSRF-Token` header on all `POST`/`PUT`/`PATCH`/`DELETE` requests, **or**
 - `Authorization: Bearer <token>` header.
 
 Default credentials on first boot: **`admin` / `netbee`** (`must_change_password: true`).
@@ -72,9 +72,10 @@ Default credentials on first boot: **`admin` / `netbee`** (`must_change_password
 | `GET` | `/api/v1/firewall/ruleset` | Live `nft -j list ruleset` JSON |
 | `GET` | `/api/v1/firewall/config` | Toggles (`transparent_dns`, `expose_wireguard`, `flow_offload`), custom rules & port forwards |
 | `PUT` | `/api/v1/firewall/config` | Replace full firewall config (dry-run validated via `nft -c` + **60s rollback guard**) |
-| `POST` | `/api/v1/firewall/rules` | Add custom filter rule (`input`/`forward`, `accept`/`drop`/`reject`) |
+| `PATCH` | `/api/v1/firewall/toggles` | Partial toggle update (`transparent_dns`, `expose_wireguard`, `wireguard_port`, `flow_offload`) without overwriting rules |
+| `POST` | `/api/v1/firewall/rules` | Add custom filter rule (`input`/`forward` → `custom_input`/`custom_forward`, IPv4/IPv6, `accept`/`drop`/`reject`) |
 | `DELETE` | `/api/v1/firewall/rules/{id}` | Delete custom rule |
-| `POST` | `/api/v1/firewall/port-forwards` | Add DNAT port forward (`protocol`: `tcp`/`udp`/`both`, `ext_port`, `int_ip`, `int_port`) |
+| `POST` | `/api/v1/firewall/port-forwards` | Add DNAT port forward (`protocol`: `tcp`/`udp`/`both`, `ext_port`, `int_ip`, `int_port` — use `0` for 1:1 range) |
 | `DELETE` | `/api/v1/firewall/port-forwards/{id}` | Delete port forward |
 | `PUT` | `/api/v1/firewall/offload` | `{"enabled":true}` toggle `nftables` software flow offload |
 | `POST` | `/api/v1/firewall/reload` | Reload `/etc/nftables.conf` |
@@ -128,3 +129,4 @@ Default credentials on first boot: **`admin` / `netbee`** (`must_change_password
 | `POST` | `/api/v1/diag/iperf3` | `{"host":"...","port":5201,"duration":5,"reverse":false}` → native `iperf3 -J` JSON |
 | `POST` | `/api/v1/diag/dns` | `{"host":"example.com","server":"127.0.0.1"}` |
 | `POST` | `/api/v1/diag/capture` | Safe bounded `tcpdump`: `{"interface":"eth0","count":20,"proto":"tcp","port":443}` |
+

@@ -143,9 +143,14 @@ func (s *Server) handleDiagCapture(w http.ResponseWriter, r *http.Request) {
 	args = append(args, expr...)
 
 	res, err := sys.Run(12*time.Second, "tcpdump", args...)
+	packets := []string{}
+	if trimmed := strings.TrimSpace(res.Stdout); trimmed != "" {
+		packets = strings.Split(trimmed, "\n")
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"ok":      err == nil || res.Stdout != "",
-		"packets": strings.Split(strings.TrimSpace(res.Stdout), "\n"),
+		"ok":      err == nil || len(packets) > 0,
+		"packets": packets,
 		"summary": strings.TrimSpace(res.Stderr),
 	})
 }
+
