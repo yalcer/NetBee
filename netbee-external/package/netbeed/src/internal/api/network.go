@@ -794,6 +794,7 @@ func ParseEthtoolSettings(stdout string) map[string]any {
 		"speed":                "",
 		"duplex":               "",
 		"autoneg":              true,
+		"supports_autoneg":     false,
 		"link_detected":        false,
 		"wake_on":              "",
 		"supports_wake_on":     "",
@@ -807,8 +808,12 @@ func ParseEthtoolSettings(stdout string) map[string]any {
 			continue
 		}
 		if strings.HasPrefix(line, "Supported link modes:") {
-			inModes = true
 			rest := strings.TrimSpace(strings.TrimPrefix(line, "Supported link modes:"))
+			if strings.EqualFold(rest, "Not reported") {
+				inModes = false
+				continue
+			}
+			inModes = true
 			if rest != "" {
 				modes = append(modes, strings.Fields(rest)...)
 			}
@@ -832,6 +837,8 @@ func ParseEthtoolSettings(stdout string) map[string]any {
 			info["speed"] = v
 		case "Duplex":
 			info["duplex"] = v
+		case "Supports auto-negotiation":
+			info["supports_autoneg"] = strings.EqualFold(v, "yes")
 		case "Auto-negotiation":
 			info["autoneg"] = strings.EqualFold(v, "on")
 		case "Supports Wake-on":
@@ -898,9 +905,10 @@ func applyEthtoolConfig(iface string, cfg config.EthtoolConfig) error {
 	if !cfg.Autoneg {
 		sArgs = append(sArgs, "speed", fmt.Sprintf("%d", cfg.Speed), "duplex", cfg.Duplex, "autoneg", "off")
 	} else {
-		// Only invoke 'autoneg on' when link previously had autoneg disabled (avoids PHY errors on virtio/USB NICs)
+		// Only invoke 'autoneg on' when PHY explicitly supports autonegotiation and previously had it disabled
 		if cur, err := sys.Run(3*time.Second, "ethtool", iface); err == nil {
-			if link := ParseEthtoolSettings(cur.Stdout); link["autoneg"] == false {
+			link := ParseEthtoolSettings(cur.Stdout)
+			if link["autoneg"] == false && link["supports_autoneg"] == true {
 				sArgs = append(sArgs, "autoneg", "on")
 			}
 		}

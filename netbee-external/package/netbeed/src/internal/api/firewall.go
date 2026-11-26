@@ -87,12 +87,14 @@ func RenderCustomNFT(fw config.FirewallState, lanIP string) string {
 		if rule.OutIface != "" && rule.Chain == "forward" {
 			parts = append(parts, fmt.Sprintf("oifname %q", rule.OutIface))
 		}
+		v4 := false
 		v6 := false
 		if rule.SrcAddr != "" {
 			if isIPv6Addr(rule.SrcAddr) {
 				v6 = true
 				parts = append(parts, fmt.Sprintf("ip6 saddr %s", rule.SrcAddr))
 			} else {
+				v4 = true
 				parts = append(parts, fmt.Sprintf("ip saddr %s", rule.SrcAddr))
 			}
 		}
@@ -101,6 +103,7 @@ func RenderCustomNFT(fw config.FirewallState, lanIP string) string {
 				v6 = true
 				parts = append(parts, fmt.Sprintf("ip6 daddr %s", rule.DstAddr))
 			} else {
+				v4 = true
 				parts = append(parts, fmt.Sprintf("ip daddr %s", rule.DstAddr))
 			}
 		}
@@ -112,18 +115,33 @@ func RenderCustomNFT(fw config.FirewallState, lanIP string) string {
 				parts = append(parts, fmt.Sprintf("meta l4proto %s", rule.Protocol))
 			}
 		case "icmpv6":
+			v6 = true
 			parts = append(parts, "ip6 nexthdr icmpv6")
 		case "icmp":
 			if v6 {
 				parts = append(parts, "ip6 nexthdr icmpv6")
 			} else {
+				v4 = true
 				parts = append(parts, "ip protocol icmp")
 			}
 		}
 		if rule.Log {
 			parts = append(parts, fmt.Sprintf(`limit rate 10/minute log prefix "netbee-%s: "`, rule.ID))
 		}
-		parts = append(parts, rule.Action)
+		if rule.Action == "reject" {
+			switch {
+			case rule.Protocol == "tcp":
+				parts = append(parts, "reject with tcp reset")
+			case v6:
+				parts = append(parts, "reject with icmpv6 type port-unreachable")
+			case v4:
+				parts = append(parts, "reject with icmp type port-unreachable")
+			default:
+				parts = append(parts, "reject")
+			}
+		} else {
+			parts = append(parts, rule.Action)
+		}
 		fmt.Fprintf(&b, "add rule inet netbee_fw %s %s\n", chain, strings.Join(parts, " "))
 	}
 
@@ -200,8 +218,37 @@ func validatePortForward(pf config.PortForward) error {
 	return nil
 }
 
+func restoreFileSnapshot(path string, data []byte, readErr error, perm os.FileMode) {
+	if readErr != nil {
+		if os.IsNotExist(readErr) {
+			_ = os.Remove(path)
+		}
+		return
+	}
+	_ = config.AtomicWriteFile(path, data, perm)
+}
+
 // mutateAndApplyFirewall snapshots state & nft drop-in BEFORE mutating Store, validates via nft -c, and reloads.
 func (s *Server) mutateAndApplyFirewall(reason string, mutate func(*config.FirewallState) error) error {
+	probe := s.Store.Get().Firewall
+	if err := mutate(&probe); err != nil {
+		return err
+	}
+
+	wasActive := s.Rollback.Status().Active
+	prevStateData, prevStateErr := os.ReadFile(s.Cfg.StatePath)
+	prevNftData, prevNftErr := os.ReadFile(uiNftDropInPath)
+
+	abortAttempt := func() {
+		if !wasActive {
+			s.Rollback.RevertNow()
+			return
+		}
+		restoreFileSnapshot(uiNftDropInPath, prevNftData, prevNftErr, 0644)
+		restoreFileSnapshot(s.Cfg.StatePath, prevStateData, prevStateErr, 0600)
+		_ = s.Store.Reload()
+	}
+
 	files := []string{uiNftDropInPath, s.Cfg.StatePath}
 	s.Rollback.Begin(reason, time.Duration(s.Cfg.RollbackSeconds)*time.Second, files, func() {
 		_ = s.Store.Reload()
@@ -221,21 +268,21 @@ func (s *Server) mutateAndApplyFirewall(reason string, mutate func(*config.Firew
 		lanIP = st.LAN.IP
 		return nil
 	}); err != nil {
-		s.Rollback.RevertNow()
+		abortAttempt()
 		return err
 	}
 
 	rendered := RenderCustomNFT(fw, lanIP)
 	if err := config.AtomicWriteFile(uiNftDropInPath, []byte(rendered), 0644); err != nil {
-		s.Rollback.RevertNow()
+		abortAttempt()
 		return err
 	}
 	if _, err := sys.Run(5*time.Second, "nft", "-c", "-f", "/etc/nftables.conf"); err != nil {
-		s.Rollback.RevertNow()
+		abortAttempt()
 		return fmt.Errorf("nftables validation failed: %w", err)
 	}
 	if _, err := sys.Run(10*time.Second, "/etc/init.d/S35nftables", "reload"); err != nil {
-		s.Rollback.RevertNow()
+		abortAttempt()
 		return err
 	}
 	if fw.FlowOffload {
@@ -398,6 +445,7 @@ func (s *Server) handleUpdateFirewallRule(w http.ResponseWriter, r *http.Request
 	}
 	found := false
 	err := s.mutateAndApplyFirewall("Update firewall rule", func(fw *config.FirewallState) error {
+		found = false
 		for i, existing := range fw.CustomRules {
 			if existing.ID == id {
 				fw.CustomRules[i] = rule
@@ -425,6 +473,7 @@ func (s *Server) handleDelFirewallRule(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	found := false
 	err := s.mutateAndApplyFirewall("Delete firewall rule", func(fw *config.FirewallState) error {
+		found = false
 		next := make([]config.FirewallRule, 0, len(fw.CustomRules))
 		for _, item := range fw.CustomRules {
 			if item.ID == id {
@@ -497,6 +546,7 @@ func (s *Server) handleUpdatePortForward(w http.ResponseWriter, r *http.Request)
 	}
 	found := false
 	err := s.mutateAndApplyFirewall("Update port forward", func(fw *config.FirewallState) error {
+		found = false
 		for i, existing := range fw.PortForwards {
 			if existing.ID == id {
 				fw.PortForwards[i] = pf
@@ -524,6 +574,7 @@ func (s *Server) handleDelPortForward(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	found := false
 	err := s.mutateAndApplyFirewall("Delete port forward", func(fw *config.FirewallState) error {
+		found = false
 		next := make([]config.PortForward, 0, len(fw.PortForwards))
 		for _, item := range fw.PortForwards {
 			if item.ID == id {
@@ -569,6 +620,16 @@ func (s *Server) handleSetFirewallRaw(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "raw nftables snippet invalid or exceeds 64 KB")
 		return
 	}
+	wasActive := s.Rollback.Status().Active
+	prevRawData, prevRawErr := os.ReadFile(customNftDropInPath)
+	abortRaw := func() {
+		if !wasActive {
+			s.Rollback.RevertNow()
+			return
+		}
+		restoreFileSnapshot(customNftDropInPath, prevRawData, prevRawErr, 0644)
+	}
+
 	s.Rollback.Begin("Custom raw nftables update", time.Duration(s.Cfg.RollbackSeconds)*time.Second, []string{customNftDropInPath}, func() {
 		_, _ = sys.Run(10*time.Second, "/etc/init.d/S35nftables", "reload")
 		if s.Store.Get().Firewall.FlowOffload {
@@ -576,17 +637,17 @@ func (s *Server) handleSetFirewallRaw(w http.ResponseWriter, r *http.Request) {
 		}
 	})
 	if err := config.AtomicWriteFile(customNftDropInPath, []byte(req.Content), 0644); err != nil {
-		s.Rollback.RevertNow()
+		abortRaw()
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	if _, err := sys.Run(5*time.Second, "nft", "-c", "-f", "/etc/nftables.conf"); err != nil {
-		s.Rollback.RevertNow()
+		abortRaw()
 		writeErr(w, http.StatusBadRequest, "nftables syntax check failed: "+err.Error())
 		return
 	}
 	if _, err := sys.Run(10*time.Second, "/etc/init.d/S35nftables", "reload"); err != nil {
-		s.Rollback.RevertNow()
+		abortRaw()
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}

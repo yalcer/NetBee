@@ -41,8 +41,8 @@ func addIperfFirewallRules(lanIf, wgIf string, port int) {
 		if !sys.ValidIface(ifc) {
 			continue
 		}
-		fmt.Fprintf(&b, "add rule inet netbee_fw custom_input iifname %q tcp dport %d comment %q accept\n", ifc, port, iperfNftComment)
-		fmt.Fprintf(&b, "add rule inet netbee_fw custom_input iifname %q udp dport %d comment %q accept\n", ifc, port, iperfNftComment)
+		fmt.Fprintf(&b, "add rule inet netbee_fw custom_input iifname %q tcp dport %d accept comment %q\n", ifc, port, iperfNftComment)
+		fmt.Fprintf(&b, "add rule inet netbee_fw custom_input iifname %q udp dport %d accept comment %q\n", ifc, port, iperfNftComment)
 	}
 	if b.Len() > 0 {
 		_, _ = sys.RunWithInput(3*time.Second, b.String(), "nft", "-f", "-")

@@ -109,7 +109,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		HttpOnly: true,
 		Secure:   r.TLS != nil,
 		SameSite: http.SameSiteLaxMode,
-		Expires:  sess.ExpiresAt,
+		MaxAge:   int((12 * time.Hour).Seconds()),
 	})
 	writeJSON(w, http.StatusOK, map[string]any{
 		"username":             sess.Username,
@@ -457,8 +457,18 @@ func (s *Server) handleSetTimezone(w http.ResponseWriter, r *http.Request) {
 	}
 	zoneFile := filepath.Join("/usr/share/zoneinfo", req.Timezone)
 	if _, err := os.Stat(zoneFile); err != nil {
-		writeErr(w, http.StatusBadRequest, "timezone not installed on device")
-		return
+		if req.Timezone == "UTC" {
+			alt := "/usr/share/zoneinfo/Etc/UTC"
+			if _, altErr := os.Stat(alt); altErr == nil {
+				zoneFile = alt
+			} else {
+				writeErr(w, http.StatusBadRequest, "timezone not installed on device")
+				return
+			}
+		} else {
+			writeErr(w, http.StatusBadRequest, "timezone not installed on device")
+			return
+		}
 	}
 	_ = os.Remove("/etc/localtime")
 	if err := os.Symlink(zoneFile, "/etc/localtime"); err != nil {

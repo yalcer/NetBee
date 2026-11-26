@@ -271,6 +271,9 @@ func isSameOrigin(r *http.Request, origin string) bool {
 }
 
 func (s *Server) RestoreRuntimeOnBoot() {
+	if _, err := os.Stat(sysctlRouterConfPath); err == nil {
+		_, _ = sys.Run(5*time.Second, "/sbin/sysctl", "-p", sysctlRouterConfPath)
+	}
 	st := s.Store.Get()
 	if _, err := os.Stat(nftVarsPath); err == nil {
 		_ = syncNetIfConfigs(st)

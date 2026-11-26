@@ -718,3 +718,84 @@ func TestHiveStaticWebCachingAndSingleFlowConntrackValidation(t *testing.T) {
 		}
 	}
 }
+
+func TestApplianceHardeningRejectSyntaxVirtualEthtoolAndRollbackIsolation(t *testing.T) {
+	srv, _ := newTestServer(t, "")
+	h := srv.Handler()
+
+	// Session cookie must use relative MaxAge (43200s) rather than wall-clock Expires for cold-boot 1970-01-01 safety
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", bytes.NewBufferString(`{"username":"admin","password":"netbee"}`)))
+	var sessCk *http.Cookie
+	for _, c := range rec.Result().Cookies() {
+		if c.Name == auth.SessionCookieName {
+			sessCk = c
+		}
+	}
+	if sessCk == nil || sessCk.MaxAge != 43200 {
+		t.Fatalf("expected session cookie MaxAge=43200, got %+v", sessCk)
+	}
+	var lr struct{ Token string }
+	_ = json.Unmarshal(rec.Body.Bytes(), &lr)
+
+	// RenderCustomNFT emits protocol-aware reject statements inside inet table
+	nft := RenderCustomNFT(config.FirewallState{
+		CustomRules: []config.FirewallRule{
+			{ID: "r_tcp", Enabled: true, Chain: "input", Action: "reject", Protocol: "tcp", DstPort: "25"},
+			{ID: "r_v4", Enabled: true, Chain: "forward", Action: "reject", Protocol: "udp", SrcAddr: "192.168.10.0/24", DstPort: "1900"},
+			{ID: "r_v6", Enabled: true, Chain: "forward", Action: "reject", Protocol: "udp", SrcAddr: "2001:db8::/64", DstPort: "1900"},
+		},
+	}, "192.168.10.1")
+	for _, want := range []string{
+		"tcp dport 25 reject with tcp reset",
+		"ip saddr 192.168.10.0/24 udp dport 1900 reject with icmp type port-unreachable",
+		"ip6 saddr 2001:db8::/64 udp dport 1900 reject with icmpv6 type port-unreachable",
+	} {
+		if !strings.Contains(nft, want) {
+			t.Fatalf("RenderCustomNFT missing %q in:\n%s", want, nft)
+		}
+	}
+
+	// Virtual NIC ("Supported link modes: Not reported") must report empty supported_link_modes and supports_autoneg=false
+	virtLink := ParseEthtoolSettings("Settings for eth0:\n\tSupported link modes:   Not reported\n\tSupports auto-negotiation: No\n\tAuto-negotiation: off\n\tLink detected: yes\n")
+	modes, _ := virtLink["supported_link_modes"].([]string)
+	if len(modes) != 0 || virtLink["supports_autoneg"] != false {
+		t.Fatalf("unexpected virtual NIC ethtool parse: %+v", virtLink)
+	}
+
+	// Duplicate/missing firewall rule errors must NOT revert an already-active pending rollback session
+	if err := srv.Store.Update(func(st *config.State) error {
+		st.Firewall.CustomRules = []config.FirewallRule{{
+			ID: "block_smtp", Name: "Block SMTP", Enabled: true, Chain: "input", Action: "reject", Protocol: "tcp", DstPort: "25",
+		}}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	srv.Rollback.Begin("Pending firewall edit", 10*time.Second, []string{srv.Cfg.StatePath}, func() {
+		_ = srv.Store.Reload()
+	})
+	defer srv.Rollback.Confirm()
+
+	// Duplicate POST -> 409 Conflict without wiping block_smtp or cancelling active rollback
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/firewall/rules", bytes.NewBufferString(`{"id":"block_smtp","name":"Dup","enabled":true,"chain":"input","action":"drop","protocol":"tcp","dst_port":"25"}`))
+	req.Header.Set("Authorization", "Bearer "+lr.Token)
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("expected 409 on duplicate firewall rule id, got %d %s", rec.Code, rec.Body.String())
+	}
+	if !srv.Rollback.Status().Active || len(srv.Store.Get().Firewall.CustomRules) != 1 {
+		t.Fatalf("duplicate rule error unexpectedly reverted active rollback or wiped rules: active=%v rules=%+v",
+			srv.Rollback.Status().Active, srv.Store.Get().Firewall.CustomRules)
+	}
+
+	// Non-existent DELETE -> 404 Not Found without wiping block_smtp or cancelling active rollback
+	req = httptest.NewRequest(http.MethodDelete, "/api/v1/firewall/rules/nonexistent", nil)
+	req.Header.Set("Authorization", "Bearer "+lr.Token)
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNotFound || !srv.Rollback.Status().Active || len(srv.Store.Get().Firewall.CustomRules) != 1 {
+		t.Fatalf("404 delete unexpectedly affected rollback or rules: code=%d active=%v", rec.Code, srv.Rollback.Status().Active)
+	}
+}
