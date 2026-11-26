@@ -19,6 +19,23 @@ cat > "${TARGET_DIR}/etc/netbee-release" <<'EOF'
 NetBee OS 0.1.0 (ARM64 / Raspberry Pi 5 Hardened Firewall & Router)
 EOF
 
+# Replace Buildroot skeleton /var/log -> ../tmp symlink with a dedicated mountpoint
+# so /etc/fstab mounts /var/log (0755,32M) separately without overriding /tmp (1777)
+if [ -L "${TARGET_DIR}/var/log" ]; then
+	rm -f "${TARGET_DIR}/var/log"
+fi
+mkdir -p "${TARGET_DIR}/var/log"
+
+# Ensure /etc/inittab remounts / with microSD wear-leveling flags (noatime,commit=30)
+if [ -f "${TARGET_DIR}/etc/inittab" ]; then
+	sed -i 's|mount -o remount,rw /|mount -o remount,rw,noatime,commit=30 /|' "${TARGET_DIR}/etc/inittab"
+fi
+
+# Provide top-level /usr/share/zoneinfo/UTC convenience alias when Etc/UTC is installed
+if [ -f "${TARGET_DIR}/usr/share/zoneinfo/Etc/UTC" ] && [ ! -e "${TARGET_DIR}/usr/share/zoneinfo/UTC" ]; then
+	ln -snf Etc/UTC "${TARGET_DIR}/usr/share/zoneinfo/UTC"
+fi
+
 # Ensure persistent state & SSH key directories exist prior to makedevs permission pass
 for dir in \
 	"${TARGET_DIR}/root/.ssh" \
