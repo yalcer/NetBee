@@ -681,9 +681,48 @@ func (s *Server) handleGetConntrack(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleFlushConntrack(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	proto := strings.ToLower(strings.TrimSpace(q.Get("proto")))
+	src := strings.TrimSpace(q.Get("src"))
+	dst := strings.TrimSpace(q.Get("dst"))
+	sport := strings.TrimSpace(q.Get("sport"))
+	dport := strings.TrimSpace(q.Get("dport"))
+
+	// Single-flow termination when 5-tuple filter parameters are supplied
+	if proto != "" || src != "" || dst != "" {
+		validProtos := map[string]bool{"tcp": true, "udp": true, "icmp": true, "icmpv6": true}
+		if !validProtos[proto] {
+			writeErr(w, http.StatusBadRequest, "invalid conntrack proto (expected tcp, udp, icmp, or icmpv6)")
+			return
+		}
+		if net.ParseIP(src) == nil || net.ParseIP(dst) == nil {
+			writeErr(w, http.StatusBadRequest, "valid src and dst IP addresses are required")
+			return
+		}
+		args := []string{"-D", "-p", proto, "-s", src, "-d", dst}
+		if (proto == "tcp" || proto == "udp") && sport != "" && dport != "" {
+			var sp, dp int
+			if _, err := fmt.Sscanf(sport, "%d", &sp); err != nil || !sys.ValidPort(sp) {
+				writeErr(w, http.StatusBadRequest, "invalid sport")
+				return
+			}
+			if _, err := fmt.Sscanf(dport, "%d", &dp); err != nil || !sys.ValidPort(dp) {
+				writeErr(w, http.StatusBadRequest, "invalid dport")
+				return
+			}
+			args = append(args, "--sport", fmt.Sprintf("%d", sp), "--dport", fmt.Sprintf("%d", dp))
+		}
+		if _, err := sys.Run(5*time.Second, "conntrack", args...); err != nil {
+			writeErr(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "mode": "single"})
+		return
+	}
+
 	if _, err := sys.Run(5*time.Second, "conntrack", "-F"); err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "mode": "flush_all"})
 }

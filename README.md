@@ -28,7 +28,7 @@ Minimal, hardened Buildroot-based firewall and router OS for **Raspberry Pi 5** 
 | **WAN (`eth1`)** | DHCP / IPv6-PD via `dhcpcd` (USB or PCIe NIC; PPPoE / ONT VLAN 35 ready) |
 | **DHCP Pool** | `192.168.10.100` – `192.168.10.200` (`AdGuardHome`) |
 | **SSH (`dropbear`)** | `ssh netbee@192.168.10.1` or `ssh root@192.168.10.1` (SHA-512 default password: `netbee` — rotate via `netbee-passwd`; root SSH can be disabled with `-w`) |
-| **Web API / UI (`netbeed`)** | `https://192.168.10.1` (default: `admin` / `netbee`; static frontend dir: `/usr/share/netbee/web`, see [API.md](netbee-external/package/netbeed/API.md)) |
+| **Web UI & API (`Hive` + `netbeed`)** | `https://192.168.10.1` (default: `admin` / `netbee`; offline-bundled `hive/` SPA served from `/usr/share/netbee/web`, see [API.md](netbee-external/package/netbeed/API.md)) |
 | **AdGuardHome UI** | `http://192.168.10.1:3000` (LAN only; default: `admin` / `netbee`) |
 | **CLI Utilities** | `netbee-cli`, `netbee-status`, `netbee-passwd`, `netbee-user`, `netbee-sqm`, `netbee-backup`, `netbee-factory-reset` |
 
@@ -83,6 +83,7 @@ make qemu
 ```text
 NetBee/
 ├── Makefile                        # Build & QEMU wrapper targets
+├── hive/                           # Offline-bundled Hive Web UI SPA (served by netbeed on :443)
 ├── scripts/run-qemu.sh             # ARM64 QEMU launcher (non-destructive qcow2 overlay)
 └── netbee-external/                # BR2_EXTERNAL tree
     ├── configs/netbee_rpi5_defconfig

@@ -18,6 +18,11 @@ define NETBEED_INSTALL_TARGET_CMDS
 	$(INSTALL) -D -m 0600 $(NETBEED_PKGDIR)/netbeed.json \
 		$(TARGET_DIR)/etc/netbee/netbeed.json
 	mkdir -p $(TARGET_DIR)/usr/share/netbee/web
+	rm -rf $(TARGET_DIR)/usr/share/netbee/web/assets
+	$(INSTALL) -D -m 0644 $(NETBEED_PKGDIR)/../../../hive/index.html \
+		$(TARGET_DIR)/usr/share/netbee/web/index.html
+	cp -a $(NETBEED_PKGDIR)/../../../hive/assets \
+		$(TARGET_DIR)/usr/share/netbee/web/assets
 endef
 
 define NETBEED_INSTALL_INIT_SYSV

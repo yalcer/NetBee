@@ -340,10 +340,16 @@ func (s *Server) handleStaticFrontend(w http.ResponseWriter, r *http.Request) {
 	target := filepath.Join(baseDir, clean)
 	if strings.HasPrefix(target, baseDir+string(os.PathSeparator)) {
 		if info, err := os.Stat(target); err == nil && !info.IsDir() {
+			if strings.HasPrefix(clean, "/assets/vendor/") {
+				w.Header().Set("Cache-Control", "public, max-age=86400")
+			} else if strings.HasSuffix(clean, ".html") {
+				w.Header().Set("Cache-Control", "no-cache")
+			}
 			http.ServeFile(w, r, target)
 			return
 		}
 	}
+	w.Header().Set("Cache-Control", "no-cache")
 	http.ServeFile(w, r, indexPath)
 }
 

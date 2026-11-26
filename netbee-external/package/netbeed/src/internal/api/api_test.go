@@ -669,3 +669,52 @@ func TestPreCreatedOSUsersDropbearRootFlagAndBackupAllowlist(t *testing.T) {
 		t.Fatal("expected new password set via SetPasswordDirect to verify")
 	}
 }
+
+func TestHiveStaticWebCachingAndSingleFlowConntrackValidation(t *testing.T) {
+	srv, dir := newTestServer(t, "")
+	vendorDir := filepath.Join(dir, "web", "assets", "vendor")
+	if err := os.MkdirAll(vendorDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(vendorDir, "jquery.min.js"), []byte("/*jquery*/"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	h := srv.Handler()
+
+	// Root index.html uses no-cache
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+	if rec.Code != http.StatusOK || rec.Header().Get("Cache-Control") != "no-cache" {
+		t.Fatalf("expected 200 + Cache-Control: no-cache on /, got %d (%q)", rec.Code, rec.Header().Get("Cache-Control"))
+	}
+
+	// Bundled offline vendor asset uses public max-age caching
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/assets/vendor/jquery.min.js", nil))
+	if rec.Code != http.StatusOK || rec.Header().Get("Cache-Control") != "public, max-age=86400" {
+		t.Fatalf("expected 200 + vendor Cache-Control on /assets/vendor/jquery.min.js, got %d (%q)", rec.Code, rec.Header().Get("Cache-Control"))
+	}
+
+	// Authenticate and verify single-flow conntrack query parameter validation
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", bytes.NewBufferString(`{"username":"admin","password":"netbee"}`)))
+	var lr struct{ Token string }
+	_ = json.Unmarshal(rec.Body.Bytes(), &lr)
+
+	badQueries := []string{
+		"/api/v1/firewall/conntrack?proto=gre&src=192.168.10.50&dst=1.1.1.1",
+		"/api/v1/firewall/conntrack?proto=tcp&src=192.168.10.50",
+		"/api/v1/firewall/conntrack?proto=tcp&src=192.168.10.50&dst=1.1.1.1&sport=99999&dport=443",
+		"/api/v1/firewall/conntrack?proto=tcp&src=not-an-ip&dst=1.1.1.1",
+	}
+	for _, q := range badQueries {
+		req := httptest.NewRequest(http.MethodDelete, q, nil)
+		req.Header.Set("Authorization", "Bearer "+lr.Token)
+		rec = httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("expected 400 for invalid conntrack query %q, got %d", q, rec.Code)
+		}
+	}
+}
