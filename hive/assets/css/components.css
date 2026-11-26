@@ -1,0 +1,1045 @@
+/* ==========================================================================
+   Hive Design System — Shared Technical Components
+   100% token-driven; zero hardcoded colors. Works in Dark Honey & Light Honey.
+   ========================================================================== */
+
+/* --------------------------------------------------------------------------
+   KPI / Telemetry Metric Cards
+   -------------------------------------------------------------------------- */
+
+.q-kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--q-space-4);
+  margin-bottom: var(--q-space-5);
+}
+
+.q-kpi-card {
+  background-color: var(--q-surface);
+  border: 1px solid var(--q-border);
+  border-radius: var(--q-radius-lg);
+  padding: var(--q-space-4) var(--q-space-5);
+  box-shadow: var(--q-shadow-sm);
+  display: flex;
+  flex-direction: column;
+  gap: var(--q-space-2);
+  transition: border-color var(--q-transition-fast), background-color var(--q-transition-normal);
+}
+
+.q-kpi-card:hover {
+  border-color: var(--q-border-strong);
+}
+
+.q-kpi-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--q-space-2);
+}
+
+.q-kpi-label {
+  font-size: var(--q-text-xs);
+  font-weight: var(--q-weight-semibold);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--q-text-muted);
+}
+
+.q-kpi-icon {
+  width: 28px;
+  height: 28px;
+  border-radius: var(--q-radius-sm);
+  background-color: var(--q-elevated);
+  border: 1px solid var(--q-border-subtle);
+  color: var(--q-primary);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.q-kpi-value {
+  font-family: var(--q-font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--q-text-2xl);
+  font-weight: var(--q-weight-semibold);
+  color: var(--q-text);
+  line-height: 1.2;
+}
+
+.q-kpi-sub {
+  font-size: var(--q-text-xs);
+  color: var(--q-text-secondary);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--q-space-2);
+}
+
+.q-kpi-card .ui.tiny.progress {
+  margin: 4px 0 0;
+}
+
+/* --------------------------------------------------------------------------
+   Staged Changes Indicator & Review Diff List
+   -------------------------------------------------------------------------- */
+
+@keyframes qPopIn {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes qRuleFlash {
+  0% {
+    background-color: var(--q-primary-soft);
+    box-shadow: inset 4px 0 0 var(--q-primary);
+  }
+  100% {
+    background-color: var(--q-primary-soft);
+    box-shadow: inset 3px 0 0 var(--q-primary);
+  }
+}
+
+@keyframes qChartReveal {
+  from {
+    opacity: 0.35;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.q-pending-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 10px;
+  border-radius: var(--q-radius-md);
+  background-color: var(--q-warning-soft);
+  border: 1px solid var(--q-warning-border);
+  color: var(--q-warning-text);
+  font-size: var(--q-text-xs);
+  font-weight: var(--q-weight-semibold);
+  cursor: pointer;
+  animation: qPopIn 180ms var(--q-ease-out) both;
+  transition: background-color var(--q-transition-fast), border-color var(--q-transition-fast);
+}
+
+.q-pending-btn:hover {
+  background-color: var(--q-surface-hover);
+  border-color: var(--q-warning);
+}
+
+.q-pending-btn[hidden] {
+  display: none !important;
+}
+
+/* Floating Bottom-Right Uncommitted Changes Dock */
+.q-staged-dock {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  width: 372px;
+  max-width: calc(100vw - 32px);
+  z-index: calc(var(--q-z-header) + 5);
+  background-color: var(--q-surface);
+  border: 1px solid var(--q-border-strong);
+  border-left: 3px solid var(--q-warning);
+  border-radius: var(--q-radius-lg);
+  box-shadow: var(--q-shadow-lg);
+  overflow: hidden;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transform: translateY(14px) scale(0.98);
+  transition:
+    opacity 200ms var(--q-ease-out),
+    transform 220ms var(--q-ease-out),
+    visibility 220ms ease,
+    width 200ms var(--q-ease-out);
+}
+
+.q-staged-dock.is-visible {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transform: translateY(0) scale(1);
+}
+
+.q-staged-dock-head {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--q-space-3);
+  padding: 13px 14px 12px;
+}
+
+.q-staged-dock-badge {
+  width: 32px;
+  height: 32px;
+  border-radius: var(--q-radius-sm);
+  background-color: var(--q-warning-soft);
+  border: 1px solid var(--q-warning-border);
+  color: var(--q-warning-text);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.q-staged-dock-meta {
+  flex: 1;
+  min-width: 0;
+}
+
+.q-staged-dock-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.q-staged-dock-title {
+  font-size: var(--q-text-sm);
+  font-weight: var(--q-weight-semibold);
+  color: var(--q-text);
+  line-height: 1.25;
+}
+
+.q-staged-dock-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 19px;
+  padding: 0 6px;
+  border-radius: var(--q-radius-full);
+  background-color: var(--q-warning-soft);
+  border: 1px solid var(--q-warning-border);
+  color: var(--q-warning-text);
+  font-family: var(--q-font-mono);
+  font-size: 11px;
+  font-weight: var(--q-weight-semibold);
+}
+
+.q-staged-dock-summary {
+  margin-top: 3px;
+  font-size: var(--q-text-xs);
+  color: var(--q-text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.q-staged-min-btn svg {
+  transition: transform 200ms var(--q-ease-out);
+}
+
+.q-staged-dock.is-minimized {
+  width: auto;
+  min-width: 248px;
+}
+
+.q-staged-dock.is-minimized .q-staged-dock-head {
+  align-items: center;
+  padding: 10px 12px;
+}
+
+.q-staged-dock.is-minimized .q-staged-dock-summary,
+.q-staged-dock.is-minimized .q-staged-dock-actions {
+  display: none;
+}
+
+.q-staged-dock.is-minimized .q-staged-min-btn svg {
+  transform: rotate(180deg);
+}
+
+.q-staged-dock-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--q-space-2);
+  padding: 9px 14px;
+  background-color: var(--q-table-header);
+  border-top: 1px solid var(--q-border-subtle);
+}
+
+.q-staged-dock-left {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+@media (max-width: 640px) {
+  .q-staged-dock {
+    left: 16px;
+    right: 16px;
+    bottom: 16px;
+    width: auto;
+  }
+}
+
+.q-diff-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--q-space-2);
+  max-height: 340px;
+  overflow-y: auto;
+}
+
+.q-diff-item {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--q-space-3);
+  padding: 10px 12px;
+  border-radius: var(--q-radius-md);
+  background-color: var(--q-elevated);
+  border: 1px solid var(--q-border-subtle);
+}
+
+.q-diff-main {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--q-space-3);
+  min-width: 0;
+}
+
+.q-diff-summary {
+  font-size: var(--q-text-sm);
+  font-weight: var(--q-weight-medium);
+  color: var(--q-text);
+}
+
+.q-diff-detail {
+  font-size: var(--q-text-xs);
+  color: var(--q-text-muted);
+  margin-top: 2px;
+}
+
+.q-diff-time {
+  font-family: var(--q-font-mono);
+  font-size: 11px;
+  color: var(--q-text-muted);
+  flex-shrink: 0;
+}
+
+/* --------------------------------------------------------------------------
+   Pure-SVG Hive Telemetry Charts
+   -------------------------------------------------------------------------- */
+
+.q-chart-wrap {
+  position: relative;
+  width: 100%;
+  user-select: none;
+}
+
+.q-chart-svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  overflow: visible;
+  animation: qChartReveal 220ms var(--q-ease-out) both;
+}
+
+.q-chart-grid-line {
+  stroke: var(--q-border-subtle);
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
+}
+
+.q-chart-axis-text {
+  fill: var(--q-text-muted);
+  font-family: var(--q-font-mono);
+  font-size: 10.5px;
+}
+
+.q-chart-line {
+  fill: none;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.q-chart-line-rx {
+  stroke: var(--q-primary);
+}
+
+.q-chart-line-tx {
+  stroke: var(--q-lan);
+}
+
+.q-chart-area-rx {
+  fill: var(--q-primary);
+  fill-opacity: 0.1;
+}
+
+.q-chart-area-tx {
+  fill: var(--q-lan);
+  fill-opacity: 0.08;
+}
+
+.q-chart-hover-line {
+  stroke: var(--q-border-strong);
+  stroke-width: 1;
+  stroke-dasharray: 2 2;
+}
+
+.q-chart-dot {
+  stroke: var(--q-surface);
+  stroke-width: 2;
+}
+
+.q-chart-tooltip {
+  position: absolute;
+  top: 8px;
+  pointer-events: none;
+  z-index: 10;
+  min-width: 164px;
+  padding: 8px 10px;
+  border-radius: var(--q-radius-sm);
+  background-color: var(--q-elevated);
+  border: 1px solid var(--q-border-strong);
+  box-shadow: var(--q-shadow-md);
+  font-size: var(--q-text-xs);
+  color: var(--q-text);
+  transition: left 60ms linear;
+}
+
+.q-chart-tooltip[hidden] {
+  display: none;
+}
+
+.q-chart-tooltip-time {
+  font-family: var(--q-font-mono);
+  font-size: 11px;
+  color: var(--q-text-muted);
+  margin-bottom: 4px;
+}
+
+.q-chart-tooltip-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 2px;
+}
+
+.q-chart-legend {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--q-space-4);
+  margin-top: var(--q-space-3);
+  padding-top: var(--q-space-3);
+  border-top: 1px solid var(--q-border-subtle);
+  font-size: var(--q-text-xs);
+  color: var(--q-text-secondary);
+}
+
+.q-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.q-legend-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+  display: inline-block;
+}
+
+.q-legend-dot.is-rx { background-color: var(--q-primary); }
+.q-legend-dot.is-tx { background-color: var(--q-lan); }
+
+/* --------------------------------------------------------------------------
+   Filter Toolbar & Empty State
+   -------------------------------------------------------------------------- */
+
+.q-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--q-space-3);
+  margin-bottom: var(--q-space-4);
+}
+
+.q-toolbar-left,
+.q-toolbar-right {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--q-space-2);
+}
+
+.q-empty-state {
+  padding: var(--q-space-8) var(--q-space-4);
+  text-align: center;
+  color: var(--q-text-muted);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--q-space-2);
+}
+
+/* --------------------------------------------------------------------------
+   Firewall Action Badges, Priority Controls & Row States
+   -------------------------------------------------------------------------- */
+
+.ui.label.q-act-pass {
+  background-color: var(--q-success-soft) !important;
+  color: var(--q-success-text) !important;
+  border-color: var(--q-success-border) !important;
+}
+
+.ui.label.q-act-block {
+  background-color: var(--q-danger-soft) !important;
+  color: var(--q-danger-text) !important;
+  border-color: var(--q-danger-border) !important;
+}
+
+.ui.label.q-act-reject {
+  background-color: var(--q-warning-soft) !important;
+  color: var(--q-warning-text) !important;
+  border-color: var(--q-warning-border) !important;
+}
+
+.q-order-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.q-drag-handle {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--q-radius-xs);
+  background-color: transparent;
+  color: var(--q-text-muted);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: grab;
+  transition: background-color var(--q-transition-fast), color var(--q-transition-fast), border-color var(--q-transition-fast);
+}
+
+.q-drag-handle:hover,
+.q-drag-handle:focus-visible {
+  background-color: var(--q-primary-soft);
+  border-color: var(--q-primary-border);
+  color: var(--q-primary);
+  outline: none;
+}
+
+.q-drag-handle:active {
+  cursor: grabbing;
+}
+
+.q-drag-handle.is-disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.q-drag-handle.is-disabled:hover {
+  background-color: transparent;
+  border-color: transparent;
+  color: var(--q-text-muted);
+}
+
+.q-order-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 28px;
+  padding: 2px 6px;
+  border-radius: var(--q-radius-xs);
+  background-color: var(--q-elevated);
+  border: 1px solid var(--q-border-subtle);
+  font-family: var(--q-font-mono);
+  font-size: 11.5px;
+  font-weight: var(--q-weight-medium);
+  color: var(--q-text-secondary);
+}
+
+.ui.table tbody tr.q-fw-draggable {
+  transition: background-color var(--q-transition-fast), opacity var(--q-transition-fast), box-shadow var(--q-transition-fast);
+}
+
+.ui.table tbody tr.q-fw-draggable.is-dragging {
+  opacity: 0.38;
+  background-color: var(--q-primary-soft) !important;
+}
+
+.ui.table tbody tr.q-fw-draggable.is-dragging .q-drag-handle {
+  cursor: grabbing;
+  color: var(--q-primary);
+}
+
+.ui.table tbody tr.q-drop-before td {
+  box-shadow: inset 0 2px 0 0 var(--q-primary) !important;
+  background-color: var(--q-primary-soft) !important;
+}
+
+.ui.table tbody tr.q-drop-after td {
+  box-shadow: inset 0 -2px 0 0 var(--q-primary) !important;
+  background-color: var(--q-primary-soft) !important;
+}
+
+@keyframes qRuleReorderPulse {
+  0% {
+    background-color: var(--q-primary-soft);
+    box-shadow: inset 3px 0 0 var(--q-primary);
+  }
+  70% {
+    background-color: var(--q-primary-soft);
+    box-shadow: inset 3px 0 0 var(--q-primary);
+  }
+  100% {
+    background-color: transparent;
+    box-shadow: none;
+  }
+}
+
+.ui.table tbody tr.q-rule-reordered td {
+  animation: qRuleReorderPulse 650ms var(--q-ease-out);
+}
+
+.ui.table tbody tr.q-rule-reordered td:first-child {
+  box-shadow: inset 3px 0 0 var(--q-primary);
+}
+
+.q-dnd-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px;
+  border-radius: var(--q-radius-xs);
+  background-color: var(--q-elevated);
+  border: 1px solid var(--q-border-subtle);
+  font-size: 11.5px;
+  color: var(--q-text-muted);
+}
+
+.q-dnd-hint.is-locked {
+  border-color: var(--q-warning-border);
+  background-color: var(--q-warning-soft);
+  color: var(--q-warning-text);
+}
+
+.ui.table tbody tr.q-rule-disabled td {
+  opacity: 0.52;
+}
+
+.ui.table tbody tr.q-rule-matched {
+  background-color: var(--q-primary-soft) !important;
+  animation: qRuleFlash 260ms var(--q-ease-out) both;
+}
+
+.ui.table tbody tr.q-rule-matched td:first-child {
+  box-shadow: inset 3px 0 0 var(--q-primary);
+}
+
+.q-console-running::after {
+  content: " ▍";
+  color: var(--q-primary);
+  animation: qStatusBreathe 900ms steps(2, start) infinite;
+}
+
+.q-row-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* --------------------------------------------------------------------------
+   Monospace Diagnostics Console
+   -------------------------------------------------------------------------- */
+
+.q-console {
+  background-color: var(--q-bg);
+  border: 1px solid var(--q-border);
+  border-radius: var(--q-radius-md);
+  overflow: hidden;
+}
+
+.q-console-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  background-color: var(--q-table-header);
+  border-bottom: 1px solid var(--q-border-subtle);
+  font-family: var(--q-font-mono);
+  font-size: var(--q-text-xs);
+  color: var(--q-text-muted);
+}
+
+.q-console-body {
+  margin: 0;
+  padding: 12px;
+  min-height: 140px;
+  max-height: 260px;
+  overflow-y: auto;
+  font-family: var(--q-font-mono);
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--q-text-secondary);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* --------------------------------------------------------------------------
+   Packet Match Simulator Panel
+   -------------------------------------------------------------------------- */
+
+.q-sim-panel {
+  background-color: var(--q-surface);
+  border: 1px solid var(--q-border);
+  border-radius: var(--q-radius-lg);
+  padding: var(--q-space-4) var(--q-space-5);
+  margin-bottom: var(--q-space-5);
+  animation: qPopIn 180ms var(--q-ease-out) both;
+}
+
+.q-sim-panel[hidden] {
+  display: none !important;
+}
+
+.q-sim-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr)) auto;
+  gap: var(--q-space-3);
+  align-items: end;
+}
+
+.q-sim-result {
+  margin-top: var(--q-space-3);
+  padding: 10px 12px;
+  border-radius: var(--q-radius-md);
+  background-color: var(--q-elevated);
+  border: 1px solid var(--q-border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--q-space-3);
+  font-size: var(--q-text-sm);
+}
+
+.q-sim-result[hidden] {
+  display: none !important;
+}
+
+/* --------------------------------------------------------------------------
+   Quick Command Palette (Ctrl+K) & Code Preview Block (Phase 3)
+   -------------------------------------------------------------------------- */
+
+.q-topbar-cmd-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 32px;
+  padding: 0 10px;
+  border-radius: var(--q-radius-md);
+  background-color: var(--q-elevated);
+  border: 1px solid var(--q-border);
+  color: var(--q-text-muted);
+  font-size: var(--q-text-xs);
+  cursor: pointer;
+  transition: background-color var(--q-transition-fast), border-color var(--q-transition-fast), color var(--q-transition-fast);
+}
+
+.q-topbar-cmd-btn:hover {
+  background-color: var(--q-surface-hover);
+  border-color: var(--q-border-strong);
+  color: var(--q-text);
+}
+
+.q-cmd-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 330px;
+  overflow-y: auto;
+  margin-top: var(--q-space-3);
+}
+
+.q-cmd-group {
+  font-size: 11px;
+  font-weight: var(--q-weight-semibold);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--q-text-muted);
+  padding: 8px 10px 4px;
+}
+
+.q-cmd-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--q-space-3);
+  width: 100%;
+  padding: 9px 12px;
+  border-radius: var(--q-radius-md);
+  background-color: transparent;
+  border: 1px solid transparent;
+  color: var(--q-text);
+  font-size: var(--q-text-sm);
+  cursor: pointer;
+  text-align: left;
+  transition: background-color var(--q-transition-fast), border-color var(--q-transition-fast);
+}
+
+.q-cmd-item:hover,
+.q-cmd-item.is-selected {
+  background-color: var(--q-primary-soft);
+  border-color: var(--q-primary-border);
+  color: var(--q-primary);
+}
+
+.q-cmd-item-left {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--q-space-2);
+  min-width: 0;
+}
+
+.q-cmd-item-sub {
+  font-family: var(--q-font-mono);
+  font-size: 11px;
+  color: var(--q-text-muted);
+}
+
+.q-code-block {
+  margin: 0;
+  padding: var(--q-space-4);
+  border-radius: var(--q-radius-md);
+  background-color: var(--q-bg);
+  border: 1px solid var(--q-border);
+  font-family: var(--q-font-mono);
+  font-size: 12px;
+  line-height: 1.65;
+  color: var(--q-text);
+  overflow-x: auto;
+  white-space: pre;
+}
+
+@media (max-width: 768px) {
+  .q-topbar-cmd-btn .q-cmd-label,
+  .q-topbar-cmd-btn kbd {
+    display: none;
+  }
+}
+
+/* --------------------------------------------------------------------------
+   Phase 4: Protocol Distribution Bar, Token Reveal & Backup Drop Zone
+   -------------------------------------------------------------------------- */
+
+.q-proto-bar {
+  display: flex;
+  width: 100%;
+  height: 12px;
+  border-radius: var(--q-radius-full);
+  overflow: hidden;
+  background-color: var(--q-elevated);
+  border: 1px solid var(--q-border-subtle);
+  gap: 2px;
+}
+
+.q-proto-seg {
+  height: 100%;
+  transition: width 300ms var(--q-ease-out);
+}
+
+.q-proto-seg.is-tcp  { background-color: var(--q-primary); }
+.q-proto-seg.is-udp  { background-color: var(--q-lan); }
+.q-proto-seg.is-vpn  { background-color: var(--q-vpn); }
+.q-proto-seg.is-icmp { background-color: var(--q-wireless); }
+
+.q-proto-legend {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--q-space-4);
+  margin-top: var(--q-space-3);
+  font-size: var(--q-text-xs);
+  color: var(--q-text-secondary);
+}
+
+.q-legend-dot.is-vpn  { background-color: var(--q-vpn); }
+.q-legend-dot.is-icmp { background-color: var(--q-wireless); }
+
+.q-token-secret-box {
+  padding: var(--q-space-3) var(--q-space-4);
+  border-radius: var(--q-radius-md);
+  background-color: var(--q-success-soft);
+  border: 1px solid var(--q-success-border);
+  margin-bottom: var(--q-space-4);
+}
+
+.q-token-secret-box[hidden] {
+  display: none !important;
+}
+
+.q-backup-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--q-space-4);
+  margin-bottom: var(--q-space-5);
+}
+
+/* --------------------------------------------------------------------------
+   Phase 5: Packet Capture Row Selection
+   -------------------------------------------------------------------------- */
+
+.q-pkt-row {
+  cursor: pointer;
+}
+
+.q-pkt-row.is-selected td {
+  background-color: var(--q-primary-soft) !important;
+}
+
+@media (max-width: 768px) {
+  .q-backup-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 1200px) {
+  .q-kpi-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .q-sim-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 640px) {
+  .q-kpi-grid,
+  .q-sim-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* --------------------------------------------------------------------------
+   Theme-Aware Simple Login Screen & 60s Anti-Lockout Rollback Dock
+   -------------------------------------------------------------------------- */
+
+.q-login-screen {
+  min-height: 100vh;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: var(--q-space-5);
+  background-color: var(--q-bg);
+  background-image: radial-gradient(circle at 50% 0%, var(--q-primary-soft) 0%, transparent 55%);
+  position: relative;
+}
+
+.q-login-topbar {
+  position: absolute;
+  top: var(--q-space-4);
+  right: var(--q-space-4);
+  display: flex;
+  align-items: center;
+  gap: var(--q-space-2);
+}
+
+.q-login-card {
+  width: 100%;
+  max-width: 400px;
+  background-color: var(--q-surface);
+  border: 1px solid var(--q-border);
+  border-radius: var(--q-radius-lg);
+  padding: var(--q-space-6);
+  box-shadow: var(--q-shadow-lg);
+}
+
+.q-login-brand {
+  display: flex;
+  align-items: center;
+  gap: var(--q-space-3);
+  margin-bottom: var(--q-space-5);
+}
+
+.q-login-brand svg {
+  width: 42px;
+  height: 42px;
+  flex-shrink: 0;
+}
+
+.q-login-title {
+  font-size: var(--q-text-xl);
+  font-weight: var(--q-weight-bold);
+  color: var(--q-text);
+  margin: 0;
+  line-height: 1.2;
+}
+
+.q-login-subtitle {
+  font-size: var(--q-text-xs);
+  color: var(--q-text-muted);
+  margin: 2px 0 0;
+}
+
+.q-login-footer {
+  margin-top: var(--q-space-4);
+  padding-top: var(--q-space-3);
+  border-top: 1px solid var(--q-border-subtle);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: var(--q-text-xs);
+  color: var(--q-text-muted);
+}
+
+/* 60-Second Server-Side Auto-Rollback Confirmation Dock */
+.q-staged-dock.is-rollback {
+  border-left-color: var(--q-danger);
+  border-color: var(--q-danger-border);
+}
+
+.q-staged-dock.is-rollback .q-staged-dock-badge,
+.q-staged-dock.is-rollback .q-staged-dock-count {
+  background-color: var(--q-danger-soft);
+  border-color: var(--q-danger-border);
+  color: var(--q-danger-text);
+}
+
+/* Blocked Services Toggle Grid (Ad/Tracker Block) */
+.q-service-block-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(185px, 1fr));
+  gap: var(--q-space-3);
+}
+
+.q-service-block-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--q-space-2);
+  padding: 10px 12px;
+  border-radius: var(--q-radius-md);
+  background-color: var(--q-elevated);
+  border: 1px solid var(--q-border-subtle);
+  transition: border-color var(--q-transition-fast), background-color var(--q-transition-fast);
+}
+
+.q-service-block-item.is-blocked {
+  border-color: var(--q-danger-border);
+  background-color: var(--q-danger-soft);
+}
+
+

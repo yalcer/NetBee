@@ -1,0 +1,372 @@
+/* ==========================================================================
+   Hive Design System — Design Tokens
+   Brand Direction: Honey & Obsidian (Dark Honey default + Light Honey theme)
+   ========================================================================== */
+
+/* DARK HONEY THEME */
+
+:root,
+[data-theme="dark-honey"] {
+  color-scheme: dark;
+
+  /* Brand */
+  --primary: #EAAF24;
+  --primary-hover: #FFC747;
+  --primary-active: #D99B16;
+  --primary-soft: #3A301B;
+  --accent: #F5D36B;
+
+  /* Backgrounds */
+  --background: #111315;
+  --sidebar: #191C1F;
+  --surface: #22262A;
+  --surface-hover: #2B3035;
+  --surface-elevated: #32383E;
+  --input-background: #191C1F;
+
+  /* Typography */
+  --text-primary: #F3F4F6;
+  --text-secondary: #9299A1;
+  --text-muted: #737B84;
+  --text-inverse: #191C1F;
+
+  /* Borders */
+  --border: #353A40;
+  --border-hover: #50575F;
+  --border-active: #EAAF24;
+
+  /* Status */
+  --success: #22C55E;
+  --success-soft: #163B29;
+  --danger: #EF4444;
+  --danger-soft: #421F22;
+  --warning: #F97316;
+  --warning-soft: #422B1B;
+  --info: #3B82F6;
+  --info-soft: #1C2F4C;
+
+  /* Components */
+  --button-primary-bg: #EAAF24;
+  --button-primary-text: #191C1F;
+  --button-secondary-bg: #32383E;
+  --button-secondary-text: #F3F4F6;
+
+  /* Effects */
+  --card-shadow: 0 4px 16px rgba(0, 0, 0, 0.20);
+  --focus-ring: 0 0 0 3px rgba(234, 175, 36, 0.25);
+
+  /* ---- Hive Component Token Bridge (Dark Honey) ---- */
+  --q-primary: var(--primary);
+  --q-primary-hover: var(--primary-hover);
+  --q-primary-active: var(--primary-active);
+  --q-primary-soft: var(--primary-soft);
+  --q-primary-border: rgba(234, 175, 36, 0.36);
+  --q-primary-text: var(--primary);
+  --q-on-primary: var(--button-primary-text);
+  --q-accent: var(--accent);
+  --q-code-text: var(--accent);
+
+  --q-btn-primary-bg: var(--button-primary-bg);
+  --q-btn-primary-text: var(--button-primary-text);
+  --q-btn-secondary-bg: var(--button-secondary-bg);
+  --q-btn-secondary-text: var(--button-secondary-text);
+
+  /* Surfaces */
+  --q-bg: var(--background);
+  --q-sidebar: var(--sidebar);
+  --q-surface: var(--surface);
+  --q-elevated: var(--surface-elevated);
+  --q-surface-hover: var(--surface-hover);
+  --q-input-bg: var(--input-background);
+  --q-table-header: #1C2024;
+  --q-table-stripe: rgba(255, 255, 255, 0.02);
+  --q-overlay: rgba(11, 13, 15, 0.76);
+
+  /* Borders */
+  --q-border: var(--border);
+  --q-border-strong: var(--border-hover);
+  --q-border-active: var(--border-active);
+  --q-border-subtle: rgba(53, 58, 64, 0.65);
+
+  /* Text */
+  --q-text: var(--text-primary);
+  --q-text-secondary: var(--text-secondary);
+  --q-text-muted: var(--text-muted);
+  --q-text-disabled: #545B63;
+  --q-text-inverse: var(--text-inverse);
+
+  /* Semantic Status */
+  --q-success: var(--success);
+  --q-success-soft: var(--success-soft);
+  --q-success-border: rgba(34, 197, 94, 0.34);
+  --q-success-text: #4ADE80;
+  --q-on-success: #111315;
+
+  --q-warning: var(--warning);
+  --q-warning-soft: var(--warning-soft);
+  --q-warning-border: rgba(249, 115, 22, 0.36);
+  --q-warning-text: #FB923C;
+  --q-on-warning: #111315;
+
+  --q-danger: var(--danger);
+  --q-danger-soft: var(--danger-soft);
+  --q-danger-border: rgba(239, 68, 68, 0.36);
+  --q-danger-text: #F87171;
+  --q-on-danger: #FFFFFF;
+  --q-danger-focus-ring: 0 0 0 3px rgba(239, 68, 68, 0.24);
+
+  --q-info: var(--info);
+  --q-info-soft: var(--info-soft);
+  --q-info-border: rgba(59, 130, 246, 0.34);
+  --q-info-text: #60A5FA;
+
+  /* Network Domain Categories */
+  --q-wan: var(--primary);
+  --q-wan-soft: var(--primary-soft);
+  --q-wan-border: rgba(234, 175, 36, 0.38);
+  --q-lan: var(--info);
+  --q-lan-soft: var(--info-soft);
+  --q-lan-border: rgba(59, 130, 246, 0.36);
+  --q-vlan: var(--accent);
+  --q-vlan-soft: rgba(245, 211, 107, 0.14);
+  --q-vlan-border: rgba(245, 211, 107, 0.34);
+  --q-vpn: #A78BFA;
+  --q-vpn-soft: rgba(167, 139, 250, 0.14);
+  --q-vpn-border: rgba(167, 139, 250, 0.34);
+  --q-wireless: var(--success);
+  --q-wireless-soft: var(--success-soft);
+  --q-wireless-border: rgba(34, 197, 94, 0.34);
+  --q-firewall: var(--warning);
+  --q-firewall-soft: var(--warning-soft);
+  --q-firewall-border: rgba(249, 115, 22, 0.36);
+  --q-ipv6: #E879F9;
+  --q-ipv6-soft: rgba(232, 121, 249, 0.14);
+  --q-ipv6-border: rgba(232, 121, 249, 0.34);
+
+  /* Typography */
+  --q-font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --q-font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+
+  /* Type Scale */
+  --q-text-xs: 12px;
+  --q-text-sm: 13px;
+  --q-text-base: 14px;
+  --q-text-lg: 16px;
+  --q-text-xl: 20px;
+  --q-text-2xl: 24px;
+  --q-text-3xl: 32px;
+
+  /* Line Heights */
+  --q-leading-tight: 1.25;
+  --q-leading-snug: 1.4;
+  --q-leading-normal: 1.55;
+
+  /* Font Weights */
+  --q-weight-regular: 400;
+  --q-weight-medium: 500;
+  --q-weight-semibold: 600;
+  --q-weight-bold: 700;
+
+  /* Spacing Scale */
+  --q-space-1: 4px;
+  --q-space-2: 8px;
+  --q-space-3: 12px;
+  --q-space-4: 16px;
+  --q-space-5: 20px;
+  --q-space-6: 24px;
+  --q-space-8: 32px;
+  --q-space-10: 40px;
+  --q-space-12: 48px;
+
+  /* Border Radius */
+  --q-radius-xs: 4px;
+  --q-radius-sm: 6px;
+  --q-radius-md: 10px;
+  --q-radius-lg: 14px;
+  --q-radius-xl: 20px;
+  --q-radius-full: 999px;
+
+  /* Layout Dimensions */
+  --q-sidebar-width: 273px;
+  --q-sidebar-collapsed-width: 75px;
+  --q-header-height: 64px;
+  --q-content-padding: 24px;
+  --q-content-max-width: 1400px;
+
+  /* Elevation & Shadows */
+  --q-shadow-sm: var(--card-shadow);
+  --q-shadow-md: 0 6px 20px rgba(0, 0, 0, 0.30);
+  --q-shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.44);
+  --q-focus-ring: var(--focus-ring);
+
+  /* Motion */
+  --q-ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --q-transition-fast: 120ms ease;
+  --q-transition-normal: 200ms cubic-bezier(0.22, 1, 0.36, 1);
+
+  /* Z-Index Layers */
+  --q-z-sticky: 20;
+  --q-z-header: 30;
+  --q-z-sidebar: 40;
+  --q-z-backdrop: 45;
+  --q-z-dropdown: 60;
+  --q-z-tooltip: 70;
+  --q-z-modal: 1000;
+  --q-z-toast: 1100;
+}
+
+/* LIGHT HONEY THEME */
+
+[data-theme="light-honey"] {
+  color-scheme: light;
+
+  /* Brand */
+  --primary: #D99B19;
+  --primary-hover: #C58A12;
+  --primary-active: #AC7510;
+  --primary-soft: #FFF0C9;
+  --accent: #F4C95D;
+
+  /* Backgrounds */
+  --background: #F5F1E7;
+  --sidebar: #FFFCF5;
+  --surface: #FFFFFF;
+  --surface-hover: #F8F3E8;
+  --surface-elevated: #FFFFFF;
+  --input-background: #FFFFFF;
+
+  /* Typography */
+  --text-primary: #292929;
+  --text-secondary: #6F6A60;
+  --text-muted: #969084;
+  --text-inverse: #FFFFFF;
+
+  /* Borders */
+  --border: #E8DFCC;
+  --border-hover: #D7C8A9;
+  --border-active: #D99B19;
+
+  /* Status */
+  --success: #16864A;
+  --success-soft: #E3F5E9;
+  --danger: #DC3636;
+  --danger-soft: #FCE8E8;
+  --warning: #D97706;
+  --warning-soft: #FFF1D6;
+  --info: #2563EB;
+  --info-soft: #E7EFFF;
+
+  /* Components */
+  --button-primary-bg: #D99B19;
+  --button-primary-text: #FFFFFF;
+  --button-secondary-bg: #F0E9D9;
+  --button-secondary-text: #292929;
+
+  /* Effects */
+  --card-shadow: 0 3px 12px rgba(92, 59, 30, 0.07);
+  --focus-ring: 0 0 0 3px rgba(217, 155, 25, 0.20);
+
+  /* ---- Hive Component Token Bridge (Light Honey) ---- */
+  --q-primary: var(--primary);
+  --q-primary-hover: var(--primary-hover);
+  --q-primary-active: var(--primary-active);
+  --q-primary-soft: var(--primary-soft);
+  --q-primary-border: rgba(217, 155, 25, 0.36);
+  --q-primary-text: var(--primary-active);
+  --q-on-primary: var(--button-primary-text);
+  --q-accent: var(--accent);
+  --q-code-text: var(--primary-active);
+
+  --q-btn-primary-bg: var(--button-primary-bg);
+  --q-btn-primary-text: var(--button-primary-text);
+  --q-btn-secondary-bg: var(--button-secondary-bg);
+  --q-btn-secondary-text: var(--button-secondary-text);
+
+  /* Surfaces */
+  --q-bg: var(--background);
+  --q-sidebar: var(--sidebar);
+  --q-surface: var(--surface);
+  --q-elevated: var(--surface-hover);
+  --q-surface-hover: var(--surface-hover);
+  --q-input-bg: var(--input-background);
+  --q-table-header: #F5EFE2;
+  --q-table-stripe: rgba(92, 59, 30, 0.024);
+  --q-overlay: rgba(41, 35, 24, 0.44);
+
+  /* Borders */
+  --q-border: var(--border);
+  --q-border-strong: var(--border-hover);
+  --q-border-active: var(--border-active);
+  --q-border-subtle: #EFE8D9;
+
+  /* Text */
+  --q-text: var(--text-primary);
+  --q-text-secondary: var(--text-secondary);
+  --q-text-muted: var(--text-muted);
+  --q-text-disabled: #B8B1A3;
+  --q-text-inverse: var(--text-inverse);
+
+  /* Semantic Status */
+  --q-success: var(--success);
+  --q-success-soft: var(--success-soft);
+  --q-success-border: #B7E4C7;
+  --q-success-text: #126A3A;
+  --q-on-success: #FFFFFF;
+
+  --q-warning: var(--warning);
+  --q-warning-soft: var(--warning-soft);
+  --q-warning-border: #F5D28E;
+  --q-warning-text: #A15805;
+  --q-on-warning: #FFFFFF;
+
+  --q-danger: var(--danger);
+  --q-danger-soft: var(--danger-soft);
+  --q-danger-border: #F5BDBD;
+  --q-danger-text: #B42323;
+  --q-on-danger: #FFFFFF;
+  --q-danger-focus-ring: 0 0 0 3px rgba(220, 54, 54, 0.20);
+
+  --q-info: var(--info);
+  --q-info-soft: var(--info-soft);
+  --q-info-border: #BFDBFE;
+  --q-info-text: #1D4ED8;
+
+  /* Network Domain Categories (contrast-calibrated for Light Honey) */
+  --q-wan: #AC7510;
+  --q-wan-soft: #FFF0C9;
+  --q-wan-border: #EDD184;
+  --q-lan: #2563EB;
+  --q-lan-soft: #E7EFFF;
+  --q-lan-border: #BFDBFE;
+  --q-vlan: #9A640B;
+  --q-vlan-soft: #FDF3D7;
+  --q-vlan-border: #ECD490;
+  --q-vpn: #7C3AED;
+  --q-vpn-soft: #EDE9FE;
+  --q-vpn-border: #DDD6FE;
+  --q-wireless: #16864A;
+  --q-wireless-soft: #E3F5E9;
+  --q-wireless-border: #B7E4C7;
+  --q-firewall: #D97706;
+  --q-firewall-soft: #FFF1D6;
+  --q-firewall-border: #F5D28E;
+  --q-ipv6: #A21CAF;
+  --q-ipv6-soft: #FAE8FF;
+  --q-ipv6-border: #F5D0FE;
+
+  /* Shadows */
+  --q-shadow-sm: var(--card-shadow);
+  --q-shadow-md: 0 5px 16px rgba(92, 59, 30, 0.10);
+  --q-shadow-lg: 0 12px 32px rgba(92, 59, 30, 0.15);
+  --q-focus-ring: var(--focus-ring);
+}
+
+/* Responsive Token Adjustments */
+@media (max-width: 768px) {
+  :root,
+  [data-theme="dark-honey"],
+  [data-theme="light-honey"] {
+    --q-content-padding: 16px;
+    --q-header-height: 56px;
+  }
+}

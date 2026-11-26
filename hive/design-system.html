@@ -1,0 +1,1519 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark-honey">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Design System &amp; UI Components — Hive</title>
+  <meta name="description" content="Hive Dark Honey &amp; Light Honey design system tokens and customized Fomantic-UI component showcase.">
+  <link rel="icon" type="image/svg+xml" href="assets/img/favicon.svg">
+
+  <!-- Bundled Offline Fonts & Fomantic-UI CSS -->
+  <link rel="stylesheet" href="assets/css/fonts.css">
+  <link rel="stylesheet" href="assets/vendor/fomantic/semantic.min.css">
+
+  <!-- Hive Design System & Showcase Styles -->
+  <link rel="stylesheet" href="assets/css/tokens.css">
+  <link rel="stylesheet" href="assets/css/base.css">
+  <link rel="stylesheet" href="assets/css/fomantic-overrides.css">
+  <link rel="stylesheet" href="assets/css/layout.css">
+  <link rel="stylesheet" href="assets/css/components.css">
+  <link rel="stylesheet" href="assets/css/showcase.css">
+
+  <!-- Pre-paint theme & sidebar bootstrap -->
+  <script src="assets/js/core/theme-boot.js"></script>
+</head>
+<body data-q-page="design-system">
+  <a href="#main-content" class="q-skip-link">Skip to main content</a>
+
+  <div class="q-app-shell">
+    <!-- Mobile Drawer Backdrop -->
+    <div class="q-sidebar-backdrop" id="q-sidebar-backdrop" aria-hidden="true"></div>
+
+    <!-- Collapsible Application Sidebar -->
+    <aside class="q-sidebar" id="q-sidebar" aria-label="Primary navigation">
+      <div class="q-brand-area">
+        <a href="index.html" class="q-brand-link" aria-label="Hive home">
+          <span class="q-brand-mark" aria-hidden="true">
+            <svg viewBox="0 0 36 36" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <rect x="0.75" y="0.75" width="34.5" height="34.5" rx="8.25" fill="var(--q-primary-soft)" stroke="var(--q-primary-border)" stroke-width="1.5"/>
+              <polygon points="18,7.2 23.4,10.3 23.4,16.5 18,19.6 12.6,16.5 12.6,10.3" fill="var(--q-sidebar)" stroke="var(--q-primary)" stroke-width="1.8" stroke-linejoin="round"/>
+              <polygon points="12.6,16.5 18,19.6 18,25.8 12.6,28.9 7.2,25.8 7.2,19.6" fill="var(--q-sidebar)" stroke="var(--q-accent)" stroke-width="1.6" stroke-linejoin="round" stroke-opacity="0.9"/>
+              <polygon points="23.4,16.5 28.8,19.6 28.8,25.8 23.4,28.9 18,25.8 18,19.6" fill="var(--q-sidebar)" stroke="var(--q-primary)" stroke-width="1.6" stroke-linejoin="round" stroke-opacity="0.9"/>
+              <circle cx="18" cy="13.4" r="2.1" fill="var(--q-primary)"/>
+              <circle cx="18" cy="19.6" r="1.7" fill="var(--q-accent)"/>
+            </svg>
+          </span>
+          <span class="q-brand-text">
+            <span class="q-brand-name">Hive</span>
+            <span class="q-brand-slogan">Command your network.</span>
+          </span>
+        </a>
+
+        <button type="button" class="ui small icon button q-btn-ghost q-mobile-menu-btn" data-q-drawer-close aria-label="Close navigation menu">
+          <i data-lucide="x" class="q-icon"></i>
+        </button>
+      </div>
+
+      <nav class="q-sidebar-nav" id="q-sidebar-nav-groups" aria-label="Modules"></nav>
+
+      <div class="q-sidebar-footer">
+        <div class="q-sidebar-version">
+          <span class="q-mono">v0.5.0-preview</span>
+          <span class="q-text-accent q-mono">OSS</span>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Main Column -->
+    <div class="q-main-wrapper">
+      <!-- Top Navigation Header -->
+      <header class="q-topbar" role="banner">
+        <div class="q-topbar-left">
+          <button type="button" class="ui small icon button q-btn-ghost q-mobile-menu-btn" data-q-mobile-menu aria-controls="q-sidebar" aria-expanded="false" aria-label="Open navigation menu">
+            <i data-lucide="menu" class="q-icon q-icon-md"></i>
+          </button>
+
+          <button type="button" class="ui small icon button q-btn-ghost q-sidebar-toggle-btn" data-q-sidebar-toggle aria-controls="q-sidebar" aria-expanded="true" aria-label="Toggle sidebar width" data-tooltip="Toggle sidebar ( [ )" data-position="bottom left">
+            <i data-lucide="panel-left-close" class="q-icon q-icon-md q-icon-collapse"></i>
+            <i data-lucide="panel-left-open" class="q-icon q-icon-md q-icon-expand"></i>
+          </button>
+
+          <nav class="q-breadcrumb" aria-label="Breadcrumb" data-q-breadcrumbs></nav>
+        </div>
+
+        <div class="q-topbar-right">
+          <button type="button" class="q-topbar-cmd-btn" data-q-open-cmd aria-label="Open quick command palette (Ctrl+K)">
+            <i data-lucide="search" class="q-icon q-icon-sm"></i>
+            <span class="q-cmd-label">Jump to...</span>
+            <kbd>Ctrl K</kbd>
+          </button>
+
+          <button type="button" class="q-host-chip" data-q-copy-host="gw-core-01" data-tooltip="Appliance host (click to copy)" data-position="bottom center" aria-label="Copy appliance hostname gw-core-01">
+            <span class="q-status-dot is-success" aria-hidden="true"></span>
+            <span>gw-core-01</span>
+          </button>
+
+          <div class="ui top right pointing dropdown q-header-dropdown q-notif-dropdown" data-q-manual-init>
+            <button type="button" class="ui small icon button q-btn-ghost q-notif-btn" aria-label="System notifications">
+              <i data-lucide="bell" class="q-icon q-icon-md"></i>
+              <span class="q-notif-dot" aria-hidden="true"></span>
+            </button>
+            <div class="menu">
+              <div class="q-notif-header">
+                <span class="q-notif-header-title">Shell Notices</span>
+                <button type="button" class="ui mini button q-btn-ghost" data-q-clear-notifs>Mark read</button>
+              </div>
+              <div class="q-notif-list">
+                <div class="item q-notif-item">
+                  <span class="q-status-dot is-primary" style="margin-top: 6px;"></span>
+                  <div>
+                    <div class="q-notif-item-title">Design System Preview</div>
+                    <div class="q-notif-item-meta">Toggle Dark Honey &amp; Light Honey themes to audit tokens.</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <button type="button" class="ui small icon button q-btn-ghost q-theme-toggle" data-q-theme-toggle aria-label="Switch to Light Honey theme" aria-pressed="false" data-tooltip="Switch theme (Alt+T)" data-position="bottom right">
+            <i data-lucide="sun" class="q-icon q-icon-md q-theme-icon-light"></i>
+            <i data-lucide="moon" class="q-icon q-icon-md q-theme-icon-dark"></i>
+          </button>
+
+          <div class="ui top right pointing dropdown q-profile-trigger q-header-dropdown" data-q-manual-init aria-label="Operator profile menu">
+            <span class="q-avatar" aria-hidden="true">AD</span>
+            <span class="q-profile-meta">
+              <span class="q-profile-name">admin</span>
+              <span class="q-profile-role">Superuser</span>
+            </span>
+            <i data-lucide="chevron-down" class="q-icon q-icon-sm q-text-muted"></i>
+            <div class="menu">
+              <div class="header">Operator Context</div>
+              <div class="item" data-q-action="open-session">
+                <i data-lucide="terminal" class="q-icon"></i>
+                <span>Session Details</span>
+              </div>
+              <div class="item" data-q-action="open-shortcuts">
+                <i data-lucide="keyboard" class="q-icon"></i>
+                <span>Keyboard Shortcuts</span>
+              </div>
+              <div class="item" data-q-action="toggle-theme">
+                <i data-lucide="contrast" class="q-icon"></i>
+                <span>Switch Theme (<span data-q-theme-label>Dark Honey</span>)</span>
+              </div>
+              <div class="divider"></div>
+              <a class="item" href="index.html#/overview/system">
+                <i data-lucide="layout-dashboard" class="q-icon"></i>
+                <span>Open Application (Overview)</span>
+              </a>
+              <a class="item" href="index.html#/foundation/shell">
+                <i data-lucide="panel-left" class="q-icon"></i>
+                <span>Application Shell Info</span>
+              </a>
+            </div>
+          </div>
+        </div>
+      </header>
+
+      <div class="q-mobile-breadcrumb">
+        <nav class="q-breadcrumb" aria-label="Breadcrumb" data-q-breadcrumbs></nav>
+      </div>
+
+      <!-- Main Design System Showcase Content -->
+      <main id="main-content" class="q-main-content" tabindex="-1">
+        <!-- Page Title & Theme Controls -->
+        <div class="q-page-header">
+          <div>
+            <h1 class="q-page-title">Hive Design System &amp; UI Components</h1>
+            <p class="q-page-subtitle">Honey &amp; Obsidian visual tokens, typography, and customized Fomantic-UI components across Dark Honey and Light Honey themes.</p>
+          </div>
+          <div class="q-page-actions">
+            <div class="ui buttons" role="group" aria-label="Theme selection">
+              <button type="button" class="ui secondary button" data-q-set-theme="dark-honey">
+                <i data-lucide="moon" class="q-icon q-icon-sm"></i>
+                <span>Dark Honey</span>
+              </button>
+              <button type="button" class="ui secondary button" data-q-set-theme="light-honey">
+                <i data-lucide="sun" class="q-icon q-icon-sm"></i>
+                <span>Light Honey</span>
+              </button>
+            </div>
+            <a href="index.html" class="ui basic button">
+              <i data-lucide="arrow-left" class="q-icon q-icon-sm"></i>
+              <span>Back to Shell</span>
+            </a>
+          </div>
+        </div>
+
+        <!-- Section Jump Bar -->
+        <nav class="q-ds-nav" aria-label="Showcase sections">
+          <a href="#tokens" class="q-ds-nav-link is-active">Tokens &amp; Palette</a>
+          <a href="#typography" class="q-ds-nav-link">Typography</a>
+          <a href="#buttons" class="q-ds-nav-link">Buttons</a>
+          <a href="#inputs-forms" class="q-ds-nav-link">Inputs &amp; Forms</a>
+          <a href="#dropdowns" class="q-ds-nav-link">Dropdowns</a>
+          <a href="#badges-cards" class="q-ds-nav-link">Badges &amp; Cards</a>
+          <a href="#tables" class="q-ds-nav-link">Tables</a>
+          <a href="#alerts-modals" class="q-ds-nav-link">Alerts, Toasts &amp; Modals</a>
+          <a href="#tabs-menus" class="q-ds-nav-link">Tabs, Menus &amp; Tooltips</a>
+          <a href="#progress" class="q-ds-nav-link">Progress &amp; Loaders</a>
+          <a href="#theme-comparison" class="q-ds-nav-link">Dual-Theme Preview</a>
+        </nav>
+
+        <!-- ================================================================
+             1. Brand & Design Tokens
+             ================================================================ -->
+        <section id="tokens" class="q-ds-section">
+          <div class="q-ds-section-head">
+            <div>
+              <h2 class="q-ds-section-title">
+                <i data-lucide="palette" class="q-icon q-icon-md q-text-accent"></i>
+                <span>1. Brand Identity &amp; Color Tokens</span>
+              </h2>
+              <p class="q-ds-section-desc">Click any swatch to copy its CSS variable. Values automatically update when toggling Dark Honey and Light Honey themes.</p>
+            </div>
+            <span class="ui primary label">Active: <span data-q-theme-label>Dark Honey</span></span>
+          </div>
+
+          <div class="q-card q-ds-stack">
+            <div>
+              <h3 class="q-ds-group-label">Brand &amp; Honey Accents</h3>
+              <div class="q-swatch-grid">
+                <button type="button" class="q-swatch" data-q-token="--primary">
+                  <div class="q-swatch-color" style="background: var(--primary);"></div>
+                  <div class="q-swatch-info">
+                    <span class="q-swatch-name">Primary Honey</span>
+                    <span class="q-swatch-token">--primary · <span data-q-token-value>#EAAF24</span></span>
+                  </div>
+                </button>
+                <button type="button" class="q-swatch" data-q-token="--primary-hover">
+                  <div class="q-swatch-color" style="background: var(--primary-hover);"></div>
+                  <div class="q-swatch-info">
+                    <span class="q-swatch-name">Primary Hover</span>
+                    <span class="q-swatch-token">--primary-hover · <span data-q-token-value>#FFC747</span></span>
+                  </div>
+                </button>
+                <button type="button" class="q-swatch" data-q-token="--primary-active">
+                  <div class="q-swatch-color" style="background: var(--primary-active);"></div>
+                  <div class="q-swatch-info">
+                    <span class="q-swatch-name">Primary Active</span>
+                    <span class="q-swatch-token">--primary-active · <span data-q-token-value>#D99B16</span></span>
+                  </div>
+                </button>
+                <button type="button" class="q-swatch" data-q-token="--primary-soft">
+                  <div class="q-swatch-color" style="background: var(--primary-soft);"></div>
+                  <div class="q-swatch-info">
+                    <span class="q-swatch-name">Primary Soft</span>
+                    <span class="q-swatch-token">--primary-soft · <span data-q-token-value>#3A301B</span></span>
+                  </div>
+                </button>
+                <button type="button" class="q-swatch" data-q-token="--accent">
+                  <div class="q-swatch-color" style="background: var(--accent);"></div>
+                  <div class="q-swatch-info">
+                    <span class="q-swatch-name">Honey Accent</span>
+                    <span class="q-swatch-token">--accent · <span data-q-token-value>#F5D36B</span></span>
+                  </div>
+                </button>
+              </div>
+            </div>
+
+            <div>
+              <h3 class="q-ds-group-label">Surfaces &amp; Borders</h3>
+              <div class="q-swatch-grid">
+                <button type="button" class="q-swatch" data-q-token="--background">
+                  <div class="q-swatch-color" style="background: var(--background);"></div>
+                  <div class="q-swatch-info">
+                    <span class="q-swatch-name">Background</span>
+                    <span class="q-swatch-token">--background · <span data-q-token-value>#111315</span></span>
+                  </div>
+                </button>
+                <button type="button" class="q-swatch" data-q-token="--sidebar">
+                  <div class="q-swatch-color" style="background: var(--sidebar);"></div>
+                  <div class="q-swatch-info">
+                    <span class="q-swatch-name">Sidebar / Chrome</span>
+                    <span class="q-swatch-token">--sidebar · <span data-q-token-value>#191C1F</span></span>
+                  </div>
+                </button>
+                <button type="button" class="q-swatch" data-q-token="--surface">
+                  <div class="q-swatch-color" style="background: var(--surface);"></div>
+                  <div class="q-swatch-info">
+                    <span class="q-swatch-name">Surface Card</span>
+                    <span class="q-swatch-token">--surface · <span data-q-token-value>#22262A</span></span>
+                  </div>
+                </button>
+                <button type="button" class="q-swatch" data-q-token="--surface-elevated">
+                  <div class="q-swatch-color" style="background: var(--surface-elevated);"></div>
+                  <div class="q-swatch-info">
+                    <span class="q-swatch-name">Surface Elevated</span>
+                    <span class="q-swatch-token">--surface-elevated · <span data-q-token-value>#32383E</span></span>
+                  </div>
+                </button>
+                <button type="button" class="q-swatch" data-q-token="--border">
+                  <div class="q-swatch-color" style="background: var(--border);"></div>
+                  <div class="q-swatch-info">
+                    <span class="q-swatch-name">Border</span>
+                    <span class="q-swatch-token">--border · <span data-q-token-value>#353A40</span></span>
+                  </div>
+                </button>
+              </div>
+            </div>
+
+            <div>
+              <h3 class="q-ds-group-label">Semantic &amp; Network Domain Tokens</h3>
+              <div class="q-swatch-grid">
+                <button type="button" class="q-swatch" data-q-token="--success">
+                  <div class="q-swatch-color" style="background: var(--success);"></div>
+                  <div class="q-swatch-info">
+                    <span class="q-swatch-name">Success</span>
+                    <span class="q-swatch-token">--success · <span data-q-token-value>#22C55E</span></span>
+                  </div>
+                </button>
+                <button type="button" class="q-swatch" data-q-token="--warning">
+                  <div class="q-swatch-color" style="background: var(--warning);"></div>
+                  <div class="q-swatch-info">
+                    <span class="q-swatch-name">Warning / Firewall</span>
+                    <span class="q-swatch-token">--warning · <span data-q-token-value>#F97316</span></span>
+                  </div>
+                </button>
+                <button type="button" class="q-swatch" data-q-token="--danger">
+                  <div class="q-swatch-color" style="background: var(--danger);"></div>
+                  <div class="q-swatch-info">
+                    <span class="q-swatch-name">Danger</span>
+                    <span class="q-swatch-token">--danger · <span data-q-token-value>#EF4444</span></span>
+                  </div>
+                </button>
+                <button type="button" class="q-swatch" data-q-token="--info">
+                  <div class="q-swatch-color" style="background: var(--info);"></div>
+                  <div class="q-swatch-info">
+                    <span class="q-swatch-name">Info</span>
+                    <span class="q-swatch-token">--info · <span data-q-token-value>#3B82F6</span></span>
+                  </div>
+                </button>
+                <button type="button" class="q-swatch" data-q-token="--q-lan">
+                  <div class="q-swatch-color" style="background: var(--q-lan);"></div>
+                  <div class="q-swatch-info">
+                    <span class="q-swatch-name">LAN</span>
+                    <span class="q-swatch-token">--q-lan · <span data-q-token-value>#3B82F6</span></span>
+                  </div>
+                </button>
+                <button type="button" class="q-swatch" data-q-token="--q-vpn">
+                  <div class="q-swatch-color" style="background: var(--q-vpn);"></div>
+                  <div class="q-swatch-info">
+                    <span class="q-swatch-name">VPN Tunnel</span>
+                    <span class="q-swatch-token">--q-vpn · <span data-q-token-value>#A78BFA</span></span>
+                  </div>
+                </button>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ================================================================
+             2. Typography & Spacing Scale
+             ================================================================ -->
+        <section id="typography" class="q-ds-section">
+          <div class="q-ds-section-head">
+            <div>
+              <h2 class="q-ds-section-title">
+                <i data-lucide="type" class="q-icon q-icon-md q-text-accent"></i>
+                <span>2. Typography &amp; Spacing Scale</span>
+              </h2>
+              <p class="q-ds-section-desc">Inter for interface readability; JetBrains Mono with tabular numerals for network technical data.</p>
+            </div>
+          </div>
+
+          <div class="q-ds-grid-2">
+            <div class="q-card">
+              <h3 class="q-ds-group-label">Inter UI Hierarchy</h3>
+              <div class="q-type-row">
+                <span class="q-type-meta">--q-text-3xl · 32px</span>
+                <span style="font-size: var(--q-text-3xl); font-weight: 600; letter-spacing: -0.02em;">Hive</span>
+                <span class="q-type-meta">600</span>
+              </div>
+              <div class="q-type-row">
+                <span class="q-type-meta">--q-text-2xl · 24px</span>
+                <span style="font-size: var(--q-text-2xl); font-weight: 600;">Page Heading</span>
+                <span class="q-type-meta">600</span>
+              </div>
+              <div class="q-type-row">
+                <span class="q-type-meta">--q-text-xl · 20px</span>
+                <span style="font-size: var(--q-text-xl); font-weight: 600;">Section Title</span>
+                <span class="q-type-meta">600</span>
+              </div>
+              <div class="q-type-row">
+                <span class="q-type-meta">--q-text-lg · 16px</span>
+                <span style="font-size: var(--q-text-lg); font-weight: 600;">Card Header</span>
+                <span class="q-type-meta">600</span>
+              </div>
+              <div class="q-type-row">
+                <span class="q-type-meta">--q-text-base · 14px</span>
+                <span style="font-size: var(--q-text-base);">Body copy for policies, descriptions, and help text.</span>
+                <span class="q-type-meta">400</span>
+              </div>
+              <div class="q-type-row">
+                <span class="q-type-meta">--q-text-xs · 12px</span>
+                <span class="q-text-muted" style="font-size: var(--q-text-xs);">Caption, timestamp, and secondary metadata</span>
+                <span class="q-type-meta">500</span>
+              </div>
+            </div>
+
+            <div class="q-card q-ds-stack">
+              <div>
+                <h3 class="q-ds-group-label">JetBrains Mono — Technical Data</h3>
+                <div class="q-kv-list">
+                  <div class="q-kv-row">
+                    <span class="q-kv-label">IPv4 / CIDR</span>
+                    <span class="q-kv-value q-mono">192.168.10.1/24</span>
+                  </div>
+                  <div class="q-kv-row">
+                    <span class="q-kv-label">IPv6 Prefix</span>
+                    <span class="q-kv-value q-mono">2001:db8:40a0::/48</span>
+                  </div>
+                  <div class="q-kv-row">
+                    <span class="q-kv-label">MAC Address</span>
+                    <span class="q-kv-value q-mono">00:1A:2B:3C:4D:5E</span>
+                  </div>
+                  <div class="q-kv-row">
+                    <span class="q-kv-label">Endpoint &amp; Port</span>
+                    <span class="q-kv-value q-mono">eth0 · UDP/51820 · MTU 1420</span>
+                  </div>
+                </div>
+              </div>
+
+              <hr class="q-divider" style="margin: var(--q-space-2) 0;">
+
+              <div>
+                <h3 class="q-ds-group-label">Spacing Tokens</h3>
+                <div class="q-space-list">
+                  <div class="q-space-item"><span class="q-mono">--q-space-2</span><span class="q-mono q-text-muted">8px</span><div class="q-space-bar" style="width: 16px;"></div></div>
+                  <div class="q-space-item"><span class="q-mono">--q-space-4</span><span class="q-mono q-text-muted">16px</span><div class="q-space-bar" style="width: 32px;"></div></div>
+                  <div class="q-space-item"><span class="q-mono">--q-space-6</span><span class="q-mono q-text-muted">24px</span><div class="q-space-bar" style="width: 48px;"></div></div>
+                  <div class="q-space-item"><span class="q-mono">--q-space-8</span><span class="q-mono q-text-muted">32px</span><div class="q-space-bar" style="width: 64px;"></div></div>
+                  <div class="q-space-item"><span class="q-mono">--q-space-12</span><span class="q-mono q-text-muted">48px</span><div class="q-space-bar" style="width: 96px;"></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ================================================================
+             3. Buttons
+             ================================================================ -->
+        <section id="buttons" class="q-ds-section">
+          <div class="q-ds-section-head">
+            <div>
+              <h2 class="q-ds-section-title">
+                <i data-lucide="mouse-pointer-click" class="q-icon q-icon-md q-text-accent"></i>
+                <span>3. Buttons</span>
+              </h2>
+              <p class="q-ds-section-desc">Primary, secondary, outline/basic, semantic, icon, grouped, and async loading states.</p>
+            </div>
+          </div>
+
+          <div class="q-card q-ds-stack">
+            <div>
+              <h3 class="q-ds-group-label">Hierarchy &amp; Variants</h3>
+              <div class="q-ds-row">
+                <button type="button" class="ui primary button">
+                  <i data-lucide="check" class="q-icon q-icon-sm"></i>
+                  <span>Apply Changes</span>
+                </button>
+                <button type="button" class="ui secondary button">
+                  <i data-lucide="rotate-ccw" class="q-icon q-icon-sm"></i>
+                  <span>Discard Draft</span>
+                </button>
+                <button type="button" class="ui basic primary button">Export Config</button>
+                <button type="button" class="ui basic button">Outline Action</button>
+                <button type="button" class="ui button q-btn-ghost">Ghost Action</button>
+                <button type="button" class="ui primary button" disabled>Disabled</button>
+              </div>
+            </div>
+
+            <hr class="q-divider" style="margin: var(--q-space-2) 0;">
+
+            <div>
+              <h3 class="q-ds-group-label">Semantic, Interactive Loading, Icon &amp; Segmented Groups</h3>
+              <div class="q-ds-row">
+                <button type="button" class="ui positive button">
+                  <i data-lucide="shield-check" class="q-icon q-icon-sm"></i>
+                  <span>Allow</span>
+                </button>
+                <button type="button" class="ui warning button">
+                  <i data-lucide="triangle-alert" class="q-icon q-icon-sm"></i>
+                  <span>Quarantine</span>
+                </button>
+                <button type="button" class="ui negative button">
+                  <i data-lucide="trash-2" class="q-icon q-icon-sm"></i>
+                  <span>Revoke Key</span>
+                </button>
+                <button type="button" class="ui primary button" id="q-demo-loading-btn">
+                  <i data-lucide="refresh-cw" class="q-icon q-icon-sm"></i>
+                  <span>Test Loading State</span>
+                </button>
+                <button type="button" class="ui icon button" aria-label="Refresh" data-tooltip="Reload table">
+                  <i data-lucide="refresh-cw" class="q-icon"></i>
+                </button>
+                <div class="ui buttons" id="q-demo-btn-group" role="group" aria-label="Protocol filter">
+                  <button type="button" class="ui button active">All</button>
+                  <button type="button" class="ui button">IPv4</button>
+                  <button type="button" class="ui button">IPv6</button>
+                </div>
+              </div>
+            </div>
+
+            <hr class="q-divider" style="margin: var(--q-space-2) 0;">
+
+            <div>
+              <h3 class="q-ds-group-label">Size Scale</h3>
+              <div class="q-ds-row">
+                <button type="button" class="ui mini primary button">Mini</button>
+                <button type="button" class="ui small primary button">Small</button>
+                <button type="button" class="ui primary button">Default</button>
+                <button type="button" class="ui large primary button">Large</button>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ================================================================
+             4. Inputs, Forms, Checkboxes & Toggles
+             ================================================================ -->
+        <section id="inputs-forms" class="q-ds-section">
+          <div class="q-ds-section-head">
+            <div>
+              <h2 class="q-ds-section-title">
+                <i data-lucide="sliders-horizontal" class="q-icon q-icon-md q-text-accent"></i>
+                <span>4. Inputs, Forms, Checkboxes &amp; Toggles</span>
+              </h2>
+              <p class="q-ds-section-desc">Technical monospace inputs, icon/labeled inputs, validation states, checkboxes, radios, and toggles.</p>
+            </div>
+          </div>
+
+          <div class="q-ds-grid-2">
+            <!-- Form & Input Showcase -->
+            <div class="q-card">
+              <h3 class="q-ds-group-label">Inputs &amp; Live Form Validation</h3>
+              <form class="ui form" id="q-demo-form" novalidate>
+                <div class="field">
+                  <label for="q-demo-search">Search Filter Input</label>
+                  <div class="ui fluid input q-input-icon">
+                    <i data-lucide="search" class="q-icon"></i>
+                    <input id="q-demo-search" type="search" placeholder="Filter by interface, IP, or MAC...">
+                  </div>
+                </div>
+
+                <div class="field required" id="q-demo-cidr-field">
+                  <label for="q-demo-cidr-input">Subnet Prefix (Validated IPv4 / CIDR)</label>
+                  <div class="ui fluid right labeled input q-mono">
+                    <input id="q-demo-cidr-input" type="text" class="q-mono" value="10.20.0.0/24" placeholder="192.168.10.0/24">
+                    <div class="ui label q-mono">IPv4</div>
+                  </div>
+                  <span class="q-field-hint">Try entering an invalid string and submitting to preview error styling.</span>
+                  <span class="q-field-error" id="q-demo-cidr-error" hidden>
+                    <i data-lucide="circle-alert" class="q-icon q-icon-sm"></i>
+                    <span>Invalid IPv4 address or CIDR prefix.</span>
+                  </span>
+                </div>
+
+                <div class="two fields">
+                  <div class="field">
+                    <label for="q-demo-port">Listen Port</label>
+                    <div class="ui fluid labeled input q-mono">
+                      <div class="ui label q-mono">UDP</div>
+                      <input id="q-demo-port" type="number" class="q-mono" value="51820">
+                    </div>
+                  </div>
+                  <div class="field">
+                    <label for="q-demo-disabled">Hardware MAC (Read-Only)</label>
+                    <div class="ui fluid disabled input q-mono">
+                      <input id="q-demo-disabled" type="text" class="q-mono" value="00:1A:2B:3C:4D:5E" disabled>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="field">
+                  <label for="q-demo-action">Action Input</label>
+                  <div class="ui fluid action input q-mono">
+                    <input id="q-demo-action" type="text" class="q-mono" value="qf_pub_9xA2kL8mP4nQ7vR1" readonly>
+                    <button type="button" class="ui secondary button" data-q-copy="qf_pub_9xA2kL8mP4nQ7vR1" data-q-copy-label="Sample token">
+                      <i data-lucide="copy" class="q-icon q-icon-sm"></i>
+                      <span>Copy</span>
+                    </button>
+                  </div>
+                </div>
+
+                <div class="q-ds-row">
+                  <button type="submit" class="ui primary button">Validate Form</button>
+                  <button type="reset" class="ui secondary button" id="q-demo-form-reset">Reset</button>
+                </div>
+              </form>
+            </div>
+
+            <!-- Checkboxes, Radios & Toggles -->
+            <div class="q-card q-ds-stack">
+              <div>
+                <h3 class="q-ds-group-label">Toggle Switches</h3>
+                <div class="q-ds-stack">
+                  <div class="ui toggle checkbox">
+                    <input type="checkbox" name="opt_logging" id="opt_logging" checked>
+                    <label for="opt_logging">Log matched packets to syslog</label>
+                  </div>
+                  <div class="ui toggle checkbox">
+                    <input type="checkbox" name="opt_rpf" id="opt_rpf" checked>
+                    <label for="opt_rpf">Strict reverse-path filtering (uRPF)</label>
+                  </div>
+                  <div class="ui toggle checkbox">
+                    <input type="checkbox" name="opt_ra" id="opt_ra">
+                    <label for="opt_ra">Advertise IPv6 SLAAC routes</label>
+                  </div>
+                  <div class="ui slider checkbox">
+                    <input type="checkbox" name="opt_nat" id="opt_nat" checked>
+                    <label for="opt_nat">Hardware flow offloading (slider variant)</label>
+                  </div>
+                </div>
+              </div>
+
+              <hr class="q-divider" style="margin: var(--q-space-2) 0;">
+
+              <div class="q-ds-grid-2">
+                <div>
+                  <h3 class="q-ds-group-label">Checkboxes</h3>
+                  <div class="q-ds-stack">
+                    <div class="ui checkbox">
+                      <input type="checkbox" id="chk_tcp" checked>
+                      <label for="chk_tcp">TCP Stateful Tracking</label>
+                    </div>
+                    <div class="ui checkbox">
+                      <input type="checkbox" id="chk_icmp">
+                      <label for="chk_icmp">Allow ICMP Echo</label>
+                    </div>
+                    <div class="ui disabled checkbox">
+                      <input type="checkbox" id="chk_lock" disabled checked>
+                      <label for="chk_lock">Anti-Lockout Rule (Locked)</label>
+                    </div>
+                  </div>
+                </div>
+
+                <div>
+                  <h3 class="q-ds-group-label">Radio Group</h3>
+                  <div class="q-ds-stack">
+                    <div class="ui radio checkbox">
+                      <input type="radio" name="policy_default" id="rad_drop" checked>
+                      <label for="rad_drop">Drop silently</label>
+                    </div>
+                    <div class="ui radio checkbox">
+                      <input type="radio" name="policy_default" id="rad_reject">
+                      <label for="rad_reject">Reject with RST / ICMP</label>
+                    </div>
+                    <div class="ui radio checkbox">
+                      <input type="radio" name="policy_default" id="rad_pass">
+                      <label for="rad_pass">Pass &amp; audit</label>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ================================================================
+             5. Dropdowns
+             ================================================================ -->
+        <section id="dropdowns" class="q-ds-section">
+          <div class="q-ds-section-head">
+            <div>
+              <h2 class="q-ds-section-title">
+                <i data-lucide="chevrons-up-down" class="q-icon q-icon-md q-text-accent"></i>
+                <span>5. Dropdowns</span>
+              </h2>
+              <p class="q-ds-section-desc">Standard selection, searchable picker, multi-select tags, and action dropdowns.</p>
+            </div>
+          </div>
+
+          <div class="q-card">
+            <div class="q-ds-grid-3">
+              <div>
+                <h3 class="q-ds-group-label">Standard Selection</h3>
+                <div class="ui fluid selection dropdown">
+                  <input type="hidden" name="zone" value="wan">
+                  <i class="dropdown icon"></i>
+                  <div class="default text">Select zone</div>
+                  <div class="menu">
+                    <div class="item" data-value="wan"><span class="q-status-dot is-primary"></span> WAN (Uplink)</div>
+                    <div class="item" data-value="lan"><span class="q-status-dot is-info"></span> LAN (Trusted)</div>
+                    <div class="item" data-value="dmz"><span class="q-status-dot is-warning"></span> DMZ (Isolated)</div>
+                    <div class="item" data-value="vpn"><span class="q-status-dot is-success"></span> WireGuard VPN</div>
+                  </div>
+                </div>
+              </div>
+
+              <div>
+                <h3 class="q-ds-group-label">Searchable Selection</h3>
+                <div class="ui fluid search selection dropdown">
+                  <input type="hidden" name="iface" value="eth0">
+                  <i class="dropdown icon"></i>
+                  <div class="default text">Search interface...</div>
+                  <div class="menu">
+                    <div class="item" data-value="eth0"><span class="q-mono">eth0</span> — Fiber WAN</div>
+                    <div class="item" data-value="eth1"><span class="q-mono">eth1</span> — Core LAN</div>
+                    <div class="item" data-value="vlan20"><span class="q-mono">vlan20</span> — IoT Segment</div>
+                    <div class="item" data-value="wg0"><span class="q-mono">wg0</span> — Site-to-Site WG</div>
+                    <div class="item" data-value="br0"><span class="q-mono">br0</span> — Management Bridge</div>
+                  </div>
+                </div>
+              </div>
+
+              <div>
+                <h3 class="q-ds-group-label">Multi-Select Tags</h3>
+                <div class="ui fluid multiple search selection dropdown">
+                  <input type="hidden" name="protocols" value="tcp,udp">
+                  <i class="dropdown icon"></i>
+                  <div class="default text">Choose protocols</div>
+                  <div class="menu">
+                    <div class="item" data-value="tcp">TCP</div>
+                    <div class="item" data-value="udp">UDP</div>
+                    <div class="item" data-value="icmp">ICMP</div>
+                    <div class="item" data-value="esp">ESP (IPsec)</div>
+                    <div class="item" data-value="gre">GRE</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ================================================================
+             6. Status Badges, Labels & Cards
+             ================================================================ -->
+        <section id="badges-cards" class="q-ds-section">
+          <div class="q-ds-section-head">
+            <div>
+              <h2 class="q-ds-section-title">
+                <i data-lucide="tag" class="q-icon q-icon-md q-text-accent"></i>
+                <span>6. Status Badges, Labels &amp; Cards</span>
+              </h2>
+              <p class="q-ds-section-desc">Semantic operational statuses, Hive network zone badges, and card surfaces.</p>
+            </div>
+          </div>
+
+          <div class="q-card q-ds-stack" style="margin-bottom: var(--q-space-5);">
+            <div>
+              <h3 class="q-ds-group-label">Operational Status Badges</h3>
+              <div class="q-ds-row">
+                <span class="ui label q-status-success"><span class="q-status-dot is-success"></span>Online</span>
+                <span class="ui label q-status-warning"><span class="q-status-dot is-warning"></span>Degraded</span>
+                <span class="ui label q-status-danger"><span class="q-status-dot is-danger"></span>Blocked</span>
+                <span class="ui label q-status-info"><span class="q-status-dot is-info"></span>Syncing</span>
+                <span class="ui primary label"><span class="q-status-dot is-primary"></span>Active Flow</span>
+                <span class="ui label">Idle / Standby</span>
+              </div>
+            </div>
+
+            <hr class="q-divider" style="margin: var(--q-space-2) 0;">
+
+            <div>
+              <h3 class="q-ds-group-label">Network Domain Tags</h3>
+              <div class="q-ds-row">
+                <span class="ui label q-net-wan q-badge-square q-mono">WAN</span>
+                <span class="ui label q-net-lan q-badge-square q-mono">LAN</span>
+                <span class="ui label q-net-vlan q-badge-square q-mono">VLAN 20</span>
+                <span class="ui label q-net-vpn q-badge-square q-mono">VPN · WG0</span>
+                <span class="ui label q-net-wireless q-badge-square q-mono">WIRELESS</span>
+                <span class="ui label q-net-firewall q-badge-square q-mono">FIREWALL</span>
+                <span class="ui label q-net-ipv6 q-badge-square q-mono">IPv6</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="q-ds-grid-3">
+            <div class="ui fluid card">
+              <div class="content">
+                <div class="header" style="display:flex;align-items:center;justify-content:space-between;">
+                  <span>Standard Surface Card</span>
+                  <span class="ui label q-status-success">Healthy</span>
+                </div>
+                <div class="meta q-mono">eth0 · 203.0.113.14/29</div>
+                <div class="description">Structured Fomantic-UI card customized with Hive Honey surfaces, hairline borders, and clean typography.</div>
+              </div>
+              <div class="extra content" style="display:flex;align-items:center;justify-content:space-between;">
+                <span class="q-mono">MTU 1500</span>
+                <span class="q-text-accent">Inspect →</span>
+              </div>
+            </div>
+
+            <a href="#badges-cards" class="ui fluid link card" id="q-demo-link-card">
+              <div class="content">
+                <div class="header" style="display:flex;align-items:center;justify-content:space-between;">
+                  <span>Interactive Link Card</span>
+                  <i data-lucide="arrow-up-right" class="q-icon q-text-accent"></i>
+                </div>
+                <div class="meta">Hover elevation &amp; accent border</div>
+                <div class="description">Use interactive cards for selectable profiles, templates, or drill-down summaries with restrained hover feedback.</div>
+              </div>
+              <div class="extra content">
+                <span class="ui label q-net-vpn q-mono">WireGuard Peer</span>
+              </div>
+            </a>
+
+            <div class="q-card">
+              <div class="q-card-header" style="margin-bottom: var(--q-space-3);">
+                <div>
+                  <h3 class="q-card-title">Technical Key-Value Card</h3>
+                  <p class="q-card-subtitle">Using lightweight <code>.q-card</code></p>
+                </div>
+              </div>
+              <div class="q-kv-list">
+                <div class="q-kv-row">
+                  <span class="q-kv-label">Gateway</span>
+                  <span class="q-kv-value q-mono">203.0.113.1</span>
+                </div>
+                <div class="q-kv-row">
+                  <span class="q-kv-label">DNS Resolver</span>
+                  <span class="q-kv-value q-mono">1.1.1.1 / 9.9.9.9</span>
+                </div>
+                <div class="q-kv-row">
+                  <span class="q-kv-label">State Table</span>
+                  <span class="q-kv-value q-mono">14,280 / 100,000</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ================================================================
+             7. Tables
+             ================================================================ -->
+        <section id="tables" class="q-ds-section">
+          <div class="q-ds-section-head">
+            <div>
+              <h2 class="q-ds-section-title">
+                <i data-lucide="table-2" class="q-icon q-icon-md q-text-accent"></i>
+                <span>7. Data Tables</span>
+              </h2>
+              <p class="q-ds-section-desc">Interactive filtering, zone scoping, row selection, and monospace technical alignment (sample mock dataset).</p>
+            </div>
+          </div>
+
+          <div class="q-card">
+            <div class="q-table-toolbar">
+              <div class="q-ds-row">
+                <div class="ui input q-input-icon">
+                  <i data-lucide="search" class="q-icon"></i>
+                  <input type="search" id="q-table-search" placeholder="Search sample entries...">
+                </div>
+                <div class="ui selection dropdown" id="q-table-zone-filter" data-q-manual-init style="min-width: 165px;">
+                  <input type="hidden" value="all">
+                  <i class="dropdown icon"></i>
+                  <div class="text">All Zones</div>
+                  <div class="menu">
+                    <div class="item" data-value="all">All Zones</div>
+                    <div class="item" data-value="wan">WAN</div>
+                    <div class="item" data-value="lan">LAN</div>
+                    <div class="item" data-value="vlan">VLAN</div>
+                    <div class="item" data-value="vpn">VPN</div>
+                  </div>
+                </div>
+                <span class="ui primary label" id="q-table-selected-count" hidden>0 selected</span>
+              </div>
+              <span class="q-text-muted q-mono" id="q-table-record-count" style="font-size: var(--q-text-xs);">Sample data · 5 of 5 records</span>
+            </div>
+
+            <div class="q-table-wrap">
+              <table class="ui selectable striped table" id="q-demo-table">
+                <thead>
+                  <tr>
+                    <th style="width: 44px;">
+                      <div class="ui fitted checkbox" id="q-table-check-all">
+                        <input type="checkbox" aria-label="Select all rows">
+                        <label></label>
+                      </div>
+                    </th>
+                    <th>Interface</th>
+                    <th>Zone</th>
+                    <th>Address / CIDR</th>
+                    <th>MAC Address</th>
+                    <th>Link Speed</th>
+                    <th>Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr data-zone="wan">
+                    <td>
+                      <div class="ui fitted checkbox q-row-check">
+                        <input type="checkbox" aria-label="Select eth0">
+                        <label></label>
+                      </div>
+                    </td>
+                    <td><strong class="q-mono">eth0</strong> <span class="q-text-muted">Fiber Uplink</span></td>
+                    <td><span class="ui label q-net-wan q-badge-square q-mono">WAN</span></td>
+                    <td class="q-mono">203.0.113.14/29</td>
+                    <td class="q-mono q-text-secondary">00:1A:2B:3C:4D:01</td>
+                    <td class="q-mono">2.5 Gbps</td>
+                    <td><span class="ui label q-status-success"><span class="q-status-dot is-success"></span>Up</span></td>
+                  </tr>
+                  <tr data-zone="lan">
+                    <td>
+                      <div class="ui fitted checkbox q-row-check">
+                        <input type="checkbox" aria-label="Select eth1">
+                        <label></label>
+                      </div>
+                    </td>
+                    <td><strong class="q-mono">eth1</strong> <span class="q-text-muted">Core Internal</span></td>
+                    <td><span class="ui label q-net-lan q-badge-square q-mono">LAN</span></td>
+                    <td class="q-mono">192.168.10.1/24</td>
+                    <td class="q-mono q-text-secondary">00:1A:2B:3C:4D:02</td>
+                    <td class="q-mono">1.0 Gbps</td>
+                    <td><span class="ui label q-status-success"><span class="q-status-dot is-success"></span>Up</span></td>
+                  </tr>
+                  <tr data-zone="vlan">
+                    <td>
+                      <div class="ui fitted checkbox q-row-check">
+                        <input type="checkbox" aria-label="Select vlan20">
+                        <label></label>
+                      </div>
+                    </td>
+                    <td><strong class="q-mono">vlan20</strong> <span class="q-text-muted">Isolated IoT</span></td>
+                    <td><span class="ui label q-net-vlan q-badge-square q-mono">VLAN</span></td>
+                    <td class="q-mono">10.20.0.1/24</td>
+                    <td class="q-mono q-text-secondary">00:1A:2B:3C:4D:02</td>
+                    <td class="q-mono">1.0 Gbps</td>
+                    <td><span class="ui label q-status-success"><span class="q-status-dot is-success"></span>Up</span></td>
+                  </tr>
+                  <tr data-zone="vpn">
+                    <td>
+                      <div class="ui fitted checkbox q-row-check">
+                        <input type="checkbox" aria-label="Select wg0">
+                        <label></label>
+                      </div>
+                    </td>
+                    <td><strong class="q-mono">wg0</strong> <span class="q-text-muted">Branch Tunnel</span></td>
+                    <td><span class="ui label q-net-vpn q-badge-square q-mono">VPN</span></td>
+                    <td class="q-mono">10.66.0.1/24</td>
+                    <td class="q-mono q-text-muted">— (L3 Tunnel)</td>
+                    <td class="q-mono">UDP/51820</td>
+                    <td><span class="ui label q-status-warning"><span class="q-status-dot is-warning"></span>Re-keying</span></td>
+                  </tr>
+                  <tr data-zone="wan">
+                    <td>
+                      <div class="ui fitted checkbox q-row-check">
+                        <input type="checkbox" aria-label="Select eth2">
+                        <label></label>
+                      </div>
+                    </td>
+                    <td><strong class="q-mono">eth2</strong> <span class="q-text-muted">LTE Failover</span></td>
+                    <td><span class="ui label q-net-wan q-badge-square q-mono">WAN</span></td>
+                    <td class="q-mono">198.51.100.8/30</td>
+                    <td class="q-mono q-text-secondary">00:1A:2B:3C:4D:03</td>
+                    <td class="q-mono">Standby</td>
+                    <td><span class="ui label q-status-danger"><span class="q-status-dot is-danger"></span>Down</span></td>
+                  </tr>
+                  <tr id="q-table-empty-row" style="display: none;">
+                    <td colspan="7" style="text-align: center; padding: 28px; color: var(--q-text-muted);">
+                      No sample records match the active filter criteria.
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <!-- ================================================================
+             8. Alerts, Toasts & Modals
+             ================================================================ -->
+        <section id="alerts-modals" class="q-ds-section">
+          <div class="q-ds-section-head">
+            <div>
+              <h2 class="q-ds-section-title">
+                <i data-lucide="bell-ring" class="q-icon q-icon-md q-text-accent"></i>
+                <span>8. Alerts, Toast Notifications &amp; Modals</span>
+              </h2>
+              <p class="q-ds-section-desc">Inline Fomantic messages, live toast notifications, and accessible modal dialogs.</p>
+            </div>
+            <button type="button" class="ui small basic button" id="q-restore-alerts-btn">Restore Dismissed Alerts</button>
+          </div>
+
+          <div class="q-ds-grid-2">
+            <!-- Inline Alerts -->
+            <div class="q-card q-ds-stack" id="q-demo-alerts">
+              <h3 class="q-ds-group-label">Inline Alerts (.ui.message)</h3>
+
+              <div class="ui info message">
+                <i data-lucide="info" class="q-icon q-message-icon"></i>
+                <div class="q-message-body">
+                  <div class="header">Configuration Staged</div>
+                  <p>2 pending changes queued in memory. Apply to persist across reboot.</p>
+                </div>
+                <button type="button" class="q-message-close" aria-label="Dismiss alert">
+                  <i data-lucide="x" class="q-icon q-icon-sm"></i>
+                </button>
+              </div>
+
+              <div class="ui positive message">
+                <i data-lucide="circle-check" class="q-icon q-message-icon"></i>
+                <div class="q-message-body">
+                  <div class="header">Policy Sync Complete</div>
+                  <p>Ruleset checksum <span class="q-mono">sha256:9f2c...81e4</span> verified.</p>
+                </div>
+                <button type="button" class="q-message-close" aria-label="Dismiss alert">
+                  <i data-lucide="x" class="q-icon q-icon-sm"></i>
+                </button>
+              </div>
+
+              <div class="ui warning message">
+                <i data-lucide="triangle-alert" class="q-icon q-message-icon"></i>
+                <div class="q-message-body">
+                  <div class="header">Certificate Expiring Soon</div>
+                  <p>TLS certificate for <span class="q-mono">gw-core-01</span> expires in 14 days.</p>
+                </div>
+                <button type="button" class="q-message-close" aria-label="Dismiss alert">
+                  <i data-lucide="x" class="q-icon q-icon-sm"></i>
+                </button>
+              </div>
+
+              <div class="ui negative message">
+                <i data-lucide="octagon-alert" class="q-icon q-message-icon"></i>
+                <div class="q-message-body">
+                  <div class="header">Secondary Uplink Unreachable</div>
+                  <p>Gateway probe failed on <span class="q-mono">198.51.100.1</span> (100% packet loss).</p>
+                </div>
+                <button type="button" class="q-message-close" aria-label="Dismiss alert">
+                  <i data-lucide="x" class="q-icon q-icon-sm"></i>
+                </button>
+              </div>
+            </div>
+
+            <!-- Toasts & Modals Triggers -->
+            <div class="q-card q-ds-stack">
+              <div>
+                <h3 class="q-ds-group-label">Live Toast Notifications ($.toast)</h3>
+                <p style="font-size: var(--q-text-sm); margin-bottom: var(--q-space-3);">
+                  Trigger live Fomantic-UI toast notifications anchored to the top-right viewport below the header.
+                </p>
+                <div class="q-ds-row">
+                  <button type="button" class="ui primary small button" data-q-toast-demo="honey">Honey Toast</button>
+                  <button type="button" class="ui positive small button" data-q-toast-demo="success">Success</button>
+                  <button type="button" class="ui warning small button" data-q-toast-demo="warning">Warning</button>
+                  <button type="button" class="ui negative small button" data-q-toast-demo="error">Error</button>
+                  <button type="button" class="ui secondary small button" data-q-toast-demo="info">Info</button>
+                </div>
+              </div>
+
+              <hr class="q-divider" style="margin: var(--q-space-2) 0;">
+
+              <div>
+                <h3 class="q-ds-group-label">Modal Dialogs (.ui.modal)</h3>
+                <p style="font-size: var(--q-text-sm); margin-bottom: var(--q-space-3);">
+                  Interactive dialogs styled with Hive Honey surfaces, structured headers, and dimmed backdrops.
+                </p>
+                <div class="q-ds-row">
+                  <button type="button" class="ui primary button" id="q-open-confirm-modal">
+                    <i data-lucide="check-square" class="q-icon q-icon-sm"></i>
+                    <span>Confirmation Modal</span>
+                  </button>
+                  <button type="button" class="ui secondary button" id="q-open-form-modal">
+                    <i data-lucide="file-sliders" class="q-icon q-icon-sm"></i>
+                    <span>Form Modal</span>
+                  </button>
+                  <button type="button" class="ui negative button" id="q-open-danger-modal">
+                    <i data-lucide="shield-alert" class="q-icon q-icon-sm"></i>
+                    <span>Destructive Modal</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ================================================================
+             9. Tabs, Menus & Tooltips
+             ================================================================ -->
+        <section id="tabs-menus" class="q-ds-section">
+          <div class="q-ds-section-head">
+            <div>
+              <h2 class="q-ds-section-title">
+                <i data-lucide="panel-top" class="q-icon q-icon-md q-text-accent"></i>
+                <span>9. Tabs, Menus &amp; Tooltips</span>
+              </h2>
+              <p class="q-ds-section-desc">Underline pointing tabs, bordered tabular tabs, secondary menus, pagination, and Fomantic popups.</p>
+            </div>
+          </div>
+
+          <div class="q-ds-grid-2">
+            <!-- Tabs -->
+            <div class="q-card q-ds-stack">
+              <div id="q-tabs-pointing-ctx">
+                <h3 class="q-ds-group-label">Pointing Underline Tabs</h3>
+                <div class="ui secondary pointing menu" data-tab-context="#q-tabs-pointing-ctx">
+                  <a class="item active" data-tab="tab-general">General</a>
+                  <a class="item" data-tab="tab-ipv4">IPv4 Settings</a>
+                  <a class="item" data-tab="tab-ipv6">IPv6 &amp; RA</a>
+                </div>
+                <div class="ui tab active q-tab-plain" data-tab="tab-general">
+                  <p style="margin:0;">General interface options: description, MTU (<span class="q-mono">1500</span>), and administrative link state.</p>
+                </div>
+                <div class="ui tab q-tab-plain" data-tab="tab-ipv4">
+                  <p style="margin:0;">Static IPv4 assignment <span class="q-mono">192.168.10.1/24</span> with optional upstream gateway tracking.</p>
+                </div>
+                <div class="ui tab q-tab-plain" data-tab="tab-ipv6">
+                  <p style="margin:0;">Prefix delegation <span class="q-mono">2001:db8:40a0::/48</span> using SLAAC router advertisements.</p>
+                </div>
+              </div>
+
+              <hr class="q-divider" style="margin: var(--q-space-2) 0;">
+
+              <div id="q-tabs-tabular-ctx">
+                <h3 class="q-ds-group-label">Tabular Attached Tabs</h3>
+                <div class="ui top attached tabular menu" data-tab-context="#q-tabs-tabular-ctx">
+                  <a class="item active" data-tab="t-summary">Summary</a>
+                  <a class="item" data-tab="t-raw">Raw Config</a>
+                </div>
+                <div class="ui bottom attached tab segment active" data-tab="t-summary">
+                  Clean bordered tabular container for dense configuration workspaces.
+                </div>
+                <div class="ui bottom attached tab segment" data-tab="t-raw">
+                  <code style="display:block; padding: 10px;">interface eth1 { address 192.168.10.1/24; zone lan; }</code>
+                </div>
+              </div>
+            </div>
+
+            <!-- Menus & Tooltips -->
+            <div class="q-card q-ds-stack">
+              <div>
+                <h3 class="q-ds-group-label">Vertical Secondary Menu &amp; Pagination</h3>
+                <div class="q-ds-grid-2" style="align-items: start;">
+                  <div class="ui secondary vertical fluid menu" id="q-demo-vertical-menu" style="margin:0;">
+                    <a class="active item" href="#tabs-menus">
+                      <i data-lucide="sliders-vertical" class="q-icon q-icon-sm"></i> General Settings
+                    </a>
+                    <a class="item" href="#tabs-menus">
+                      <i data-lucide="key-round" class="q-icon q-icon-sm"></i> SSH &amp; Certificates
+                    </a>
+                    <a class="item" href="#tabs-menus">
+                      <i data-lucide="bell" class="q-icon q-icon-sm"></i> Alert Channels
+                    </a>
+                  </div>
+
+                  <div>
+                    <p style="font-size: var(--q-text-xs); margin-bottom: var(--q-space-2);">Pagination Menu</p>
+                    <div class="ui pagination menu" id="q-demo-pagination">
+                      <a class="item" href="#tabs-menus" data-dir="prev" aria-label="Previous page">‹</a>
+                      <a class="active item" href="#tabs-menus" data-page="1">1</a>
+                      <a class="item" href="#tabs-menus" data-page="2">2</a>
+                      <a class="item" href="#tabs-menus" data-page="3">3</a>
+                      <a class="item" href="#tabs-menus" data-dir="next" aria-label="Next page">›</a>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <hr class="q-divider" style="margin: var(--q-space-2) 0;">
+
+              <div>
+                <h3 class="q-ds-group-label">Tooltips &amp; Rich Popups (.ui.popup)</h3>
+                <div class="q-ds-row">
+                  <button type="button" class="ui secondary small button" data-q-popup data-content="Top-aligned tooltip for quick controls." data-position="top center">Top Tooltip</button>
+                  <button type="button" class="ui secondary small button" data-q-popup data-content="Bottom-aligned tooltip with Hive Honey surface." data-position="bottom center">Bottom Tooltip</button>
+                  <button type="button" class="ui secondary small button" data-q-popup data-content="Left placement." data-position="left center">Left</button>
+                  <button type="button" class="ui basic primary small button" data-q-popup data-popup-target="#q-rich-popup" data-position="top right">
+                    <i data-lucide="info" class="q-icon q-icon-sm"></i>
+                    <span>Rich Technical Popup</span>
+                  </button>
+                </div>
+                <div class="ui popup" id="q-rich-popup" style="min-width: 220px;">
+                  <div class="header">State Table Threshold</div>
+                  <div class="content">
+                    Allocated: <span class="q-mono">14,280</span> entries<br>
+                    Limit: <span class="q-mono">100,000</span> entries (<span class="q-mono">14.3%</span>)
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ================================================================
+             10. Progress Indicators & Loaders
+             ================================================================ -->
+        <section id="progress" class="q-ds-section">
+          <div class="q-ds-section-head">
+            <div>
+              <h2 class="q-ds-section-title">
+                <i data-lucide="gauge" class="q-icon q-icon-md q-text-accent"></i>
+                <span>10. Progress Indicators &amp; Loaders</span>
+              </h2>
+              <p class="q-ds-section-desc">Interactive threshold progress bars and inline loading indicators.</p>
+            </div>
+          </div>
+
+          <div class="q-ds-grid-2">
+            <div class="q-card q-ds-stack">
+              <div style="display:flex;align-items:center;justify-content:space-between;">
+                <h3 class="q-ds-group-label" style="margin:0;">Interactive Progress Control</h3>
+                <span class="q-mono q-text-accent" id="q-interactive-progress-val">64%</span>
+              </div>
+
+              <div class="ui progress" id="q-interactive-progress" data-percent="64">
+                <div class="bar"></div>
+                <div class="label">Firmware image verification &amp; staging</div>
+              </div>
+
+              <div class="q-ds-row">
+                <button type="button" class="ui small secondary button" id="q-prog-dec">-15%</button>
+                <button type="button" class="ui small secondary button" id="q-prog-inc">+15%</button>
+                <button type="button" class="ui small positive button" id="q-prog-complete">100%</button>
+                <button type="button" class="ui small basic button" id="q-prog-reset">Reset</button>
+              </div>
+            </div>
+
+            <div class="q-card q-ds-stack">
+              <h3 class="q-ds-group-label" style="margin:0;">Semantic Thresholds &amp; Inline Loaders</h3>
+
+              <div class="ui small success progress" data-percent="32">
+                <div class="bar"></div>
+                <div class="label">Memory Utilization · 32% (Nominal)</div>
+              </div>
+
+              <div class="ui small warning progress" data-percent="78">
+                <div class="bar"></div>
+                <div class="label">NAT Port Pool · 78% (Elevated)</div>
+              </div>
+
+              <div class="ui small error progress" data-percent="94">
+                <div class="bar"></div>
+                <div class="label">Log Partition · 94% (Critical)</div>
+              </div>
+
+              <div class="q-ds-row" style="padding-top: 4px;">
+                <div class="ui active small inline loader"></div>
+                <span class="q-text-secondary" style="font-size: var(--q-text-sm);">Checking peer connectivity...</span>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ================================================================
+             11. Side-by-Side Dark Honey vs Light Honey Theme Preview
+             ================================================================ -->
+        <section id="theme-comparison" class="q-ds-section">
+          <div class="q-ds-section-head">
+            <div>
+              <h2 class="q-ds-section-title">
+                <i data-lucide="contrast" class="q-icon q-icon-md q-text-accent"></i>
+                <span>11. Dark Honey vs. Light Honey Theme Comparison</span>
+              </h2>
+              <p class="q-ds-section-desc">Scoped token comparison rendered side by side using the exact CSS custom property definitions.</p>
+            </div>
+          </div>
+
+          <div class="q-theme-compare">
+            <!-- Scoped Dark Honey Frame -->
+            <div class="q-theme-frame" data-theme="dark-honey">
+              <div class="q-theme-frame-bar">
+                <div style="display:flex;align-items:center;gap:8px;">
+                  <i data-lucide="moon" class="q-icon q-text-accent"></i>
+                  <strong>Dark Honey</strong>
+                  <span class="ui primary label">Default</span>
+                </div>
+                <button type="button" class="ui mini secondary button" data-q-set-theme="dark-honey">Activate</button>
+              </div>
+
+              <div class="q-card q-ds-stack">
+                <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
+                  <div>
+                    <div style="font-weight:600;">Gateway Policy Card</div>
+                    <div class="q-mono" style="font-size:12px;color:var(--q-text-muted);">eth0 · 192.168.10.1/24</div>
+                  </div>
+                  <span class="ui label q-status-success"><span class="q-status-dot is-success"></span>Active</span>
+                </div>
+
+                <div class="ui fluid input q-mono">
+                  <input type="text" class="q-mono" value="10.66.0.1/24" aria-label="Dark Honey preview IP input">
+                </div>
+
+                <div class="ui info message">
+                  <i data-lucide="shield-check" class="q-icon q-message-icon"></i>
+                  <div class="q-message-body">
+                    <div class="header">Dark Honey Precision</div>
+                    <p>Deep obsidian graphite surfaces paired with warm honey-gold accents for NOC clarity.</p>
+                  </div>
+                </div>
+
+                <div class="q-ds-row">
+                  <button type="button" class="ui small primary button">Save Policy</button>
+                  <button type="button" class="ui small secondary button">Cancel</button>
+                  <span class="ui label q-net-vpn q-badge-square q-mono">VPN</span>
+                  <span class="ui label q-net-firewall q-badge-square q-mono">FW</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Scoped Light Honey Frame -->
+            <div class="q-theme-frame" data-theme="light-honey">
+              <div class="q-theme-frame-bar">
+                <div style="display:flex;align-items:center;gap:8px;">
+                  <i data-lucide="sun" class="q-icon q-text-accent"></i>
+                  <strong>Light Honey</strong>
+                  <span class="ui label">High Daylight Legibility</span>
+                </div>
+                <button type="button" class="ui mini secondary button" data-q-set-theme="light-honey">Activate</button>
+              </div>
+
+              <div class="q-card q-ds-stack">
+                <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
+                  <div>
+                    <div style="font-weight:600;">Gateway Policy Card</div>
+                    <div class="q-mono" style="font-size:12px;color:var(--q-text-muted);">eth0 · 192.168.10.1/24</div>
+                  </div>
+                  <span class="ui label q-status-success"><span class="q-status-dot is-success"></span>Active</span>
+                </div>
+
+                <div class="ui fluid input q-mono">
+                  <input type="text" class="q-mono" value="10.66.0.1/24" aria-label="Light Honey preview IP input">
+                </div>
+
+                <div class="ui info message">
+                  <i data-lucide="shield-check" class="q-icon q-message-icon"></i>
+                  <div class="q-message-body">
+                    <div class="header">Warm Light Honey Surfaces</div>
+                    <p>Crisp white cards over warm ivory canvas with refined amber-gold highlights.</p>
+                  </div>
+                </div>
+
+                <div class="q-ds-row">
+                  <button type="button" class="ui small primary button">Save Policy</button>
+                  <button type="button" class="ui small secondary button">Cancel</button>
+                  <span class="ui label q-net-vpn q-badge-square q-mono">VPN</span>
+                  <span class="ui label q-net-firewall q-badge-square q-mono">FW</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+      </main>
+    </div>
+  </div>
+
+  <!-- Showcase Modals -->
+  <div class="ui small modal" id="q-demo-confirm-modal" role="dialog" aria-labelledby="q-confirm-title">
+    <div class="header">
+      <span class="q-modal-header-title" id="q-confirm-title">
+        <i data-lucide="circle-check" class="q-icon q-text-accent"></i>
+        <span>Apply Configuration Revision</span>
+      </span>
+      <button type="button" class="ui mini icon button q-btn-ghost cancel" aria-label="Close">
+        <i data-lucide="x" class="q-icon"></i>
+      </button>
+    </div>
+    <div class="content">
+      <p>Apply staged changes to <span class="q-mono">gw-core-01</span>? Active TCP sessions will remain uninterrupted.</p>
+    </div>
+    <div class="actions">
+      <button type="button" class="ui secondary cancel button">Cancel</button>
+      <button type="button" class="ui primary approve button">Apply Now</button>
+    </div>
+  </div>
+
+  <div class="ui small modal" id="q-demo-form-modal" role="dialog" aria-labelledby="q-form-modal-title">
+    <div class="header">
+      <span class="q-modal-header-title" id="q-form-modal-title">
+        <i data-lucide="file-sliders" class="q-icon q-text-accent"></i>
+        <span>Create Network Alias (Preview)</span>
+      </span>
+      <button type="button" class="ui mini icon button q-btn-ghost cancel" aria-label="Close">
+        <i data-lucide="x" class="q-icon"></i>
+      </button>
+    </div>
+    <div class="content">
+      <div class="ui form">
+        <div class="field">
+          <label for="q-modal-alias-name">Alias Name</label>
+          <input id="q-modal-alias-name" type="text" class="q-mono" value="trusted_mgmt_nets">
+        </div>
+        <div class="field">
+          <label for="q-modal-alias-cidrs">CIDR Entries</label>
+          <textarea id="q-modal-alias-cidrs" rows="3" class="q-mono">192.168.10.0/24&#10;10.66.0.0/24</textarea>
+        </div>
+      </div>
+    </div>
+    <div class="actions">
+      <button type="button" class="ui secondary cancel button">Cancel</button>
+      <button type="button" class="ui primary approve button">Save Alias</button>
+    </div>
+  </div>
+
+  <div class="ui small modal" id="q-demo-danger-modal" role="dialog" aria-labelledby="q-danger-modal-title">
+    <div class="header">
+      <span class="q-modal-header-title" id="q-danger-modal-title">
+        <i data-lucide="shield-alert" class="q-icon q-text-danger"></i>
+        <span>Flush Connection State Table</span>
+      </span>
+      <button type="button" class="ui mini icon button q-btn-ghost cancel" aria-label="Close">
+        <i data-lucide="x" class="q-icon"></i>
+      </button>
+    </div>
+    <div class="content">
+      <div class="ui negative message" style="margin-bottom: var(--q-space-3);">
+        <i data-lucide="triangle-alert" class="q-icon q-message-icon"></i>
+        <div class="q-message-body">
+          <div class="header">Disruptive Action</div>
+          <p>Flushing states will drop all active TCP/UDP sessions immediately, including management sessions.</p>
+        </div>
+      </div>
+      <p style="margin:0;">This is a UI preview dialog — no real network action will be executed.</p>
+    </div>
+    <div class="actions">
+      <button type="button" class="ui secondary cancel button">Keep States</button>
+      <button type="button" class="ui negative approve button">Flush State Table</button>
+    </div>
+  </div>
+
+  <!-- Shared Modal: Quick Command Palette (Ctrl+K) -->
+  <div class="ui small modal" id="q-cmd-modal" role="dialog" aria-labelledby="q-cmd-title">
+    <div class="header">
+      <span class="q-modal-header-title" id="q-cmd-title">
+        <i data-lucide="search" class="q-icon q-text-accent"></i>
+        <span>Quick Jump &amp; Actions</span>
+      </span>
+      <button type="button" class="ui mini icon button q-btn-ghost cancel" aria-label="Close">
+        <i data-lucide="x" class="q-icon"></i>
+      </button>
+    </div>
+    <div class="content">
+      <div class="ui fluid input q-input-icon">
+        <i data-lucide="search" class="q-icon"></i>
+        <input type="search" id="q-cmd-input" placeholder="Search routes or actions..." autocomplete="off">
+      </div>
+      <div class="q-cmd-list" id="q-cmd-list" role="listbox" aria-label="Search results"></div>
+    </div>
+    <div class="actions" style="justify-content:space-between;">
+      <span class="q-text-muted" style="font-size:12px;"><kbd>↑</kbd> <kbd>↓</kbd> navigate · <kbd>Enter</kbd> select · <kbd>Esc</kbd> close</span>
+      <button type="button" class="ui secondary cancel button">Close</button>
+    </div>
+  </div>
+
+  <!-- Shared Shell Modals (Shortcuts & Session) -->
+  <div class="ui small modal" id="q-shortcuts-modal" role="dialog" aria-labelledby="q-shortcuts-title">
+    <div class="header">
+      <span class="q-modal-header-title" id="q-shortcuts-title">
+        <i data-lucide="keyboard" class="q-icon q-text-accent"></i>
+        <span>Keyboard Shortcuts</span>
+      </span>
+      <button type="button" class="ui mini icon button q-btn-ghost cancel" aria-label="Close">
+        <i data-lucide="x" class="q-icon"></i>
+      </button>
+    </div>
+    <div class="content">
+      <div class="q-kv-list">
+        <div class="q-kv-row">
+          <span class="q-kv-label">Open Quick Command Palette</span>
+          <span class="q-kv-value"><kbd>Ctrl</kbd> + <kbd>K</kbd></span>
+        </div>
+        <div class="q-kv-row">
+          <span class="q-kv-label">Collapse / Expand Sidebar (Desktop)</span>
+          <span class="q-kv-value"><kbd>[</kbd></span>
+        </div>
+        <div class="q-kv-row">
+          <span class="q-kv-label">Toggle Dark Honey / Light Honey Theme</span>
+          <span class="q-kv-value"><kbd>Alt</kbd> + <kbd>T</kbd></span>
+        </div>
+        <div class="q-kv-row">
+          <span class="q-kv-label">Close Mobile Drawer or Active Modal</span>
+          <span class="q-kv-value"><kbd>Esc</kbd></span>
+        </div>
+      </div>
+    </div>
+    <div class="actions">
+      <button type="button" class="ui primary approve button">Done</button>
+    </div>
+  </div>
+
+  <div class="ui small modal" id="q-session-modal" role="dialog" aria-labelledby="q-session-title">
+    <div class="header">
+      <span class="q-modal-header-title" id="q-session-title">
+        <i data-lucide="terminal" class="q-icon q-text-accent"></i>
+        <span>Appliance Session Context</span>
+      </span>
+      <button type="button" class="ui mini icon button q-btn-ghost cancel" aria-label="Close">
+        <i data-lucide="x" class="q-icon"></i>
+      </button>
+    </div>
+    <div class="content">
+      <div class="q-kv-list">
+        <div class="q-kv-row">
+          <span class="q-kv-label">Operator</span>
+          <span class="q-kv-value q-mono">admin (Superuser)</span>
+        </div>
+        <div class="q-kv-row">
+          <span class="q-kv-label">Host Identifier</span>
+          <span class="q-kv-value q-mono">gw-core-01.lan.hive.local</span>
+        </div>
+        <div class="q-kv-row">
+          <span class="q-kv-label">Management Endpoint</span>
+          <span class="q-kv-value q-mono">192.168.10.1:443</span>
+        </div>
+        <div class="q-kv-row">
+          <span class="q-kv-label">Connection Mode</span>
+          <span class="q-kv-value"><span class="ui label q-status-warning">Frontend Preview Only</span></span>
+        </div>
+      </div>
+    </div>
+    <div class="actions">
+      <button type="button" class="ui secondary cancel button">Close</button>
+    </div>
+  </div>
+
+  <!-- Scripts: Bundled Offline jQuery -> Fomantic-UI -> Lucide -->
+  <script src="assets/vendor/jquery.min.js"></script>
+  <script src="assets/vendor/fomantic/semantic.min.js"></script>
+  <script src="assets/vendor/lucide.min.js"></script>
+
+  <script src="assets/js/core/config.js"></script>
+  <script src="assets/js/core/theme.js"></script>
+  <script src="assets/js/core/icons.js"></script>
+  <script src="assets/js/core/ui.js"></script>
+  <script src="assets/js/layout/shell.js"></script>
+  <script src="assets/js/pages/design-system.js"></script>
+</body>
+</html>
+

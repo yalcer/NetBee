@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 36 36" fill="none" aria-hidden="true">
+  <rect x="0.75" y="0.75" width="34.5" height="34.5" rx="8.25" fill="var(--q-primary-soft, #3A301B)" stroke="var(--q-primary-border, rgba(234,175,36,0.36))" stroke-width="1.5"/>
+  <polygon points="18,7.2 23.4,10.3 23.4,16.5 18,19.6 12.6,16.5 12.6,10.3" fill="var(--q-sidebar, #191C1F)" stroke="var(--q-primary, #EAAF24)" stroke-width="1.8" stroke-linejoin="round"/>
+  <polygon points="12.6,16.5 18,19.6 18,25.8 12.6,28.9 7.2,25.8 7.2,19.6" fill="var(--q-sidebar, #191C1F)" stroke="var(--q-accent, #F5D36B)" stroke-width="1.6" stroke-linejoin="round" stroke-opacity="0.9"/>
+  <polygon points="23.4,16.5 28.8,19.6 28.8,25.8 23.4,28.9 18,25.8 18,19.6" fill="var(--q-sidebar, #191C1F)" stroke="var(--q-primary, #EAAF24)" stroke-width="1.6" stroke-linejoin="round" stroke-opacity="0.9"/>
+  <circle cx="18" cy="13.4" r="2.1" fill="var(--q-primary, #EAAF24)"/>
+  <circle cx="18" cy="19.6" r="1.7" fill="var(--q-accent, #F5D36B)"/>
+</svg>

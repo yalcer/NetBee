@@ -1,0 +1,490 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark-honey">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Hive — NetBee OS Firewall &amp; Router</title>
+  <meta name="description" content="Hive management interface for NetBee OS Raspberry Pi 5 router and firewall.">
+  <link rel="icon" type="image/svg+xml" href="assets/img/favicon.svg">
+
+  <!-- Bundled Offline Fonts (Inter & JetBrains Mono) -->
+  <link rel="stylesheet" href="assets/css/fonts.css">
+
+  <!-- Bundled Offline Fomantic-UI Framework CSS -->
+  <link rel="stylesheet" href="assets/vendor/fomantic/semantic.min.css">
+
+  <!-- Hive Design System, Shell & Module Styles -->
+  <link rel="stylesheet" href="assets/css/tokens.css">
+  <link rel="stylesheet" href="assets/css/base.css">
+  <link rel="stylesheet" href="assets/css/fomantic-overrides.css">
+  <link rel="stylesheet" href="assets/css/layout.css">
+  <link rel="stylesheet" href="assets/css/components.css">
+  <link rel="stylesheet" href="assets/css/modules.css">
+
+  <!-- Pre-paint theme & sidebar bootstrap (prevents FOUC) -->
+  <script src="assets/js/core/theme-boot.js"></script>
+</head>
+<body data-q-page="shell">
+  <a href="#main-content" class="q-skip-link">Skip to main content</a>
+
+  <!-- Simple Theme-Aware Login Screen (Shown when unauthenticated) -->
+  <section class="q-login-screen" id="q-login-screen" aria-labelledby="q-login-heading" hidden>
+    <div class="q-login-topbar">
+      <button type="button" class="ui small icon button q-btn-ghost q-theme-toggle" data-q-theme-toggle aria-label="Switch theme" data-tooltip="Switch theme (Alt+T)" data-position="bottom right">
+        <i data-lucide="sun" class="q-icon q-icon-md q-theme-icon-light"></i>
+        <i data-lucide="moon" class="q-icon q-icon-md q-theme-icon-dark"></i>
+      </button>
+    </div>
+
+    <div class="q-login-card">
+      <div class="q-login-brand">
+        <svg viewBox="0 0 36 36" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          <rect x="0.75" y="0.75" width="34.5" height="34.5" rx="8.25" fill="var(--q-primary-soft)" stroke="var(--q-primary-border)" stroke-width="1.5"/>
+          <polygon points="18,7.2 23.4,10.3 23.4,16.5 18,19.6 12.6,16.5 12.6,10.3" fill="var(--q-sidebar)" stroke="var(--q-primary)" stroke-width="1.8" stroke-linejoin="round"/>
+          <polygon points="12.6,16.5 18,19.6 18,25.8 12.6,28.9 7.2,25.8 7.2,19.6" fill="var(--q-sidebar)" stroke="var(--q-accent)" stroke-width="1.6" stroke-linejoin="round" stroke-opacity="0.9"/>
+          <polygon points="23.4,16.5 28.8,19.6 28.8,25.8 23.4,28.9 18,25.8 18,19.6" fill="var(--q-sidebar)" stroke="var(--q-primary)" stroke-width="1.6" stroke-linejoin="round" stroke-opacity="0.9"/>
+          <circle cx="18" cy="13.4" r="2.1" fill="var(--q-primary)"/>
+          <circle cx="18" cy="19.6" r="1.7" fill="var(--q-accent)"/>
+        </svg>
+        <div>
+          <h1 class="q-login-title" id="q-login-heading">Hive</h1>
+          <p class="q-login-subtitle">NetBee OS Router &amp; Firewall Control Plane</p>
+        </div>
+      </div>
+
+      <div class="ui negative message" id="q-login-error" hidden style="margin-bottom: var(--q-space-4);"></div>
+
+      <form class="ui form" id="q-login-form" autocomplete="on">
+        <div class="field">
+          <label for="q-login-user">Username</label>
+          <input type="text" id="q-login-user" name="username" value="admin" autocomplete="username" required>
+        </div>
+        <div class="field">
+          <label for="q-login-pass">Password</label>
+          <div class="ui action input">
+            <input type="password" id="q-login-pass" name="password" placeholder="Enter administrator password" autocomplete="current-password" required>
+            <button type="button" class="ui icon button q-btn-ghost" id="q-login-toggle-pw" aria-label="Show or hide password" title="Show / Hide Password">
+              <i data-lucide="eye" class="q-icon q-icon-sm"></i>
+            </button>
+          </div>
+        </div>
+        <button type="submit" class="ui fluid primary button" id="q-login-submit" style="margin-top: var(--q-space-4);">
+          <i data-lucide="log-in" class="q-icon q-icon-sm"></i>
+          <span>Sign In</span>
+        </button>
+      </form>
+
+      <div class="q-login-footer">
+        <span class="q-mono" data-q-login-host>netbee.lan</span>
+        <span>HTTPS Encrypted</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- Main Authenticated Application Shell -->
+  <div class="q-app-shell" id="q-app-shell" hidden>
+    <!-- Mobile Drawer Backdrop -->
+    <div class="q-sidebar-backdrop" id="q-sidebar-backdrop" aria-hidden="true"></div>
+
+    <!-- Collapsible Application Sidebar -->
+    <aside class="q-sidebar" id="q-sidebar" aria-label="Primary navigation">
+      <!-- Brand Area -->
+      <div class="q-brand-area">
+        <a href="#/overview/system" class="q-brand-link" aria-label="Hive system overview">
+          <span class="q-brand-mark" aria-hidden="true">
+            <svg viewBox="0 0 36 36" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <rect x="0.75" y="0.75" width="34.5" height="34.5" rx="8.25" fill="var(--q-primary-soft)" stroke="var(--q-primary-border)" stroke-width="1.5"/>
+              <polygon points="18,7.2 23.4,10.3 23.4,16.5 18,19.6 12.6,16.5 12.6,10.3" fill="var(--q-sidebar)" stroke="var(--q-primary)" stroke-width="1.8" stroke-linejoin="round"/>
+              <polygon points="12.6,16.5 18,19.6 18,25.8 12.6,28.9 7.2,25.8 7.2,19.6" fill="var(--q-sidebar)" stroke="var(--q-accent)" stroke-width="1.6" stroke-linejoin="round" stroke-opacity="0.9"/>
+              <polygon points="23.4,16.5 28.8,19.6 28.8,25.8 23.4,28.9 18,25.8 18,19.6" fill="var(--q-sidebar)" stroke="var(--q-primary)" stroke-width="1.6" stroke-linejoin="round" stroke-opacity="0.9"/>
+              <circle cx="18" cy="13.4" r="2.1" fill="var(--q-primary)"/>
+              <circle cx="18" cy="19.6" r="1.7" fill="var(--q-accent)"/>
+            </svg>
+          </span>
+          <span class="q-brand-text">
+            <span class="q-brand-name">Hive</span>
+            <span class="q-brand-slogan">NetBee OS Firewall</span>
+          </span>
+        </a>
+
+        <button type="button" class="ui small icon button q-btn-ghost q-mobile-menu-btn" data-q-drawer-close aria-label="Close navigation menu">
+          <i data-lucide="x" class="q-icon"></i>
+        </button>
+      </div>
+
+      <!-- Navigation Groups (populated by shell.js from config.js) -->
+      <nav class="q-sidebar-nav" id="q-sidebar-nav-groups" aria-label="Modules"></nav>
+
+      <!-- Sidebar Footer -->
+      <div class="q-sidebar-footer">
+        <div class="q-sidebar-version">
+          <span class="q-mono" data-q-os-version>NetBee OS</span>
+          <span class="q-text-accent q-mono" data-q-board-badge>RPi 5</span>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Main Column -->
+    <div class="q-main-wrapper">
+      <!-- Top Navigation Header -->
+      <header class="q-topbar" role="banner">
+        <div class="q-topbar-left">
+          <button type="button" class="ui small icon button q-btn-ghost q-mobile-menu-btn" data-q-mobile-menu aria-controls="q-sidebar" aria-expanded="false" aria-label="Open navigation menu">
+            <i data-lucide="menu" class="q-icon q-icon-md"></i>
+          </button>
+
+          <button type="button" class="ui small icon button q-btn-ghost q-sidebar-toggle-btn" data-q-sidebar-toggle aria-controls="q-sidebar" aria-expanded="true" aria-label="Toggle sidebar width" data-tooltip="Toggle sidebar ( [ )" data-position="bottom left">
+            <i data-lucide="panel-left-close" class="q-icon q-icon-md q-icon-collapse"></i>
+            <i data-lucide="panel-left-open" class="q-icon q-icon-md q-icon-expand"></i>
+          </button>
+
+          <nav class="q-breadcrumb" aria-label="Breadcrumb" data-q-breadcrumbs></nav>
+        </div>
+
+        <div class="q-topbar-right">
+          <!-- Quick Command Palette Trigger -->
+          <button type="button" class="q-topbar-cmd-btn" data-q-open-cmd aria-label="Open quick command palette (Ctrl+K)">
+            <i data-lucide="search" class="q-icon q-icon-sm"></i>
+            <span class="q-cmd-label">Jump to...</span>
+            <kbd>Ctrl K</kbd>
+          </button>
+
+          <!-- Staged Pending Changes Indicator -->
+          <button type="button" class="q-pending-btn" id="q-pending-btn" data-q-open-staged hidden aria-label="Review staged configuration changes">
+            <i data-lucide="git-commit-horizontal" class="q-icon q-icon-sm"></i>
+            <span><span data-q-pending-count>0</span> Pending</span>
+          </button>
+
+          <!-- Host Identifier -->
+          <button type="button" class="q-host-chip" data-q-copy-host="netbee" data-tooltip="Appliance host (click to copy)" data-position="bottom center" aria-label="Copy appliance hostname netbee">
+            <span class="q-status-dot is-success" data-q-stream-dot aria-hidden="true"></span>
+            <span data-q-host-label>netbee</span>
+          </button>
+
+          <!-- Notifications Dropdown -->
+          <div class="ui top right pointing dropdown q-header-dropdown q-notif-dropdown" data-q-manual-init>
+            <button type="button" class="ui small icon button q-btn-ghost q-notif-btn" aria-label="System notifications">
+              <i data-lucide="bell" class="q-icon q-icon-md"></i>
+              <span class="q-notif-dot" id="q-notif-dot" hidden aria-hidden="true"></span>
+            </button>
+            <div class="menu">
+              <div class="q-notif-header">
+                <span class="q-notif-header-title">Appliance Notices</span>
+                <button type="button" class="ui mini button q-btn-ghost" data-q-clear-notifs>Mark read</button>
+              </div>
+              <div class="q-notif-list" id="q-notif-list">
+                <div class="item q-notif-item">
+                  <span class="q-status-dot is-success" style="margin-top: 6px;"></span>
+                  <div>
+                    <div class="q-notif-item-title">Connected to netbeed Control Plane</div>
+                    <div class="q-notif-item-meta">Live telemetry, nftables, AdGuardHome, and 60s rollback safety active.</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Theme Switcher -->
+          <button type="button" class="ui small icon button q-btn-ghost q-theme-toggle" data-q-theme-toggle aria-label="Switch to Light Honey theme" aria-pressed="false" data-tooltip="Switch theme (Alt+T)" data-position="bottom right">
+            <i data-lucide="sun" class="q-icon q-icon-md q-theme-icon-light"></i>
+            <i data-lucide="moon" class="q-icon q-icon-md q-theme-icon-dark"></i>
+          </button>
+
+          <!-- User / System Profile Menu -->
+          <div class="ui top right pointing dropdown q-profile-trigger q-header-dropdown" data-q-manual-init aria-label="Operator profile menu">
+            <span class="q-avatar" data-q-user-initials aria-hidden="true">AD</span>
+            <span class="q-profile-meta">
+              <span class="q-profile-name" data-q-user-name>admin</span>
+              <span class="q-profile-role">Administrator</span>
+            </span>
+            <i data-lucide="chevron-down" class="q-icon q-icon-sm q-text-muted"></i>
+            <div class="menu">
+              <div class="header">System Operator</div>
+              <div class="item" data-q-action="open-session">
+                <i data-lucide="terminal" class="q-icon"></i>
+                <span>Session Details</span>
+              </div>
+              <div class="item" data-q-action="open-shortcuts">
+                <i data-lucide="keyboard" class="q-icon"></i>
+                <span>Keyboard Shortcuts</span>
+              </div>
+              <div class="item" data-q-action="toggle-theme">
+                <i data-lucide="contrast" class="q-icon"></i>
+                <span>Switch Theme (<span data-q-theme-label>Dark Honey</span>)</span>
+              </div>
+              <div class="divider"></div>
+              <div class="item" data-q-action="reboot-router">
+                <i data-lucide="refresh-cw" class="q-icon q-text-warning"></i>
+                <span>Reboot Router</span>
+              </div>
+              <div class="item" data-q-action="sign-out">
+                <i data-lucide="log-out" class="q-icon q-text-danger"></i>
+                <span class="q-text-danger">Sign Out</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </header>
+
+      <!-- Mobile Breadcrumb Bar -->
+      <div class="q-mobile-breadcrumb">
+        <nav class="q-breadcrumb" aria-label="Breadcrumb" data-q-breadcrumbs></nav>
+      </div>
+
+      <!-- Main Workspace -->
+      <main id="main-content" class="q-main-content" tabindex="-1">
+        <!-- Active Module Mount Target (All 16/16 Routes) -->
+        <section id="q-module-mount" aria-live="polite"></section>
+
+        <!-- Placeholder View for Unknown Routes -->
+        <section id="q-shell-placeholder-view" aria-labelledby="q-placeholder-title" hidden>
+          <div class="q-page-header">
+            <div>
+              <div style="margin-bottom: 8px;">
+                <span class="ui primary label" id="q-placeholder-group">Route</span>
+                <span class="ui label q-badge-square q-mono" id="q-placeholder-route">/unknown</span>
+              </div>
+              <h1 id="q-placeholder-title" class="q-page-title">Route Not Found</h1>
+            </div>
+            <div class="q-page-actions">
+              <button type="button" class="ui primary button" id="q-return-shell-btn">
+                <i data-lucide="arrow-left" class="q-icon"></i>
+                <span>System Overview</span>
+              </button>
+            </div>
+          </div>
+
+          <div class="q-placeholder-panel">
+            <div class="q-placeholder-icon" id="q-placeholder-icon-wrap" aria-hidden="true">
+              <i data-lucide="compass" class="q-icon q-icon-xl"></i>
+            </div>
+            <h2 style="margin: 0;">Module Not Found</h2>
+            <p id="q-placeholder-desc" style="max-width: 520px; margin: 0;">
+              No management module is registered at this hash path. Return to System Overview or press Ctrl+K to jump to any module.
+            </p>
+          </div>
+        </section>
+      </main>
+    </div>
+  </div>
+
+  <!-- Floating Bottom-Right Uncommitted Changes Dock -->
+  <aside class="q-staged-dock" id="q-staged-banner" role="status" aria-live="polite" aria-hidden="true">
+    <div class="q-staged-dock-head">
+      <div class="q-staged-dock-badge" aria-hidden="true">
+        <i data-lucide="git-commit-horizontal" class="q-icon"></i>
+      </div>
+      <div class="q-staged-dock-meta">
+        <div class="q-staged-dock-title-row">
+          <span class="q-staged-dock-title">Uncommitted Changes</span>
+          <span class="q-staged-dock-count" data-q-pending-count>0</span>
+        </div>
+        <div class="q-staged-dock-summary" data-q-pending-summary>Staged in memory — ready to review or apply to router.</div>
+      </div>
+      <button type="button" class="ui mini icon button q-btn-ghost q-staged-min-btn" data-q-staged-minimize aria-expanded="true" aria-label="Minimize uncommitted changes panel" title="Minimize / Expand">
+        <i data-lucide="chevron-down" class="q-icon q-icon-sm"></i>
+      </button>
+    </div>
+    <div class="q-staged-dock-actions">
+      <div class="q-staged-dock-left">
+        <button type="button" class="ui mini button q-btn-ghost" data-q-open-staged>
+          <i data-lucide="list" class="q-icon q-icon-sm"></i>
+          <span>Review Diff</span>
+        </button>
+        <button type="button" class="ui mini button q-btn-ghost q-text-danger" data-q-discard-staged>Discard</button>
+      </div>
+      <button type="button" class="ui mini primary button" data-q-apply-staged>
+        <i data-lucide="check" class="q-icon q-icon-sm"></i>
+        <span>Apply</span>
+      </button>
+    </div>
+  </aside>
+
+  <!-- Floating Bottom-Right 60-Second Server Rollback Confirmation Dock -->
+  <aside class="q-staged-dock is-rollback" id="q-rollback-banner" role="alert" aria-live="assertive" aria-hidden="true">
+    <div class="q-staged-dock-head">
+      <div class="q-staged-dock-badge" aria-hidden="true">
+        <i data-lucide="shield-alert" class="q-icon"></i>
+      </div>
+      <div class="q-staged-dock-meta">
+        <div class="q-staged-dock-title-row">
+          <span class="q-staged-dock-title">Confirm Changes</span>
+          <span class="q-staged-dock-count" id="q-rollback-countdown">60s</span>
+        </div>
+        <div class="q-staged-dock-summary" id="q-rollback-reason">Auto-rollback armed to prevent lockout.</div>
+      </div>
+    </div>
+    <div class="q-staged-dock-actions">
+      <button type="button" class="ui mini basic negative button" id="q-rollback-revert-btn">
+        <i data-lucide="undo-2" class="q-icon q-icon-sm"></i>
+        <span>Revert Now</span>
+      </button>
+      <button type="button" class="ui mini positive button" id="q-rollback-confirm-btn">
+        <i data-lucide="check-circle-2" class="q-icon q-icon-sm"></i>
+        <span>Confirm &amp; Keep</span>
+      </button>
+    </div>
+  </aside>
+
+  <!-- Shared Modal: Quick Command Palette (Ctrl+K) -->
+  <div class="ui small modal" id="q-cmd-modal" role="dialog" aria-labelledby="q-cmd-title">
+    <div class="header">
+      <span class="q-modal-header-title" id="q-cmd-title">
+        <i data-lucide="search" class="q-icon q-text-accent"></i>
+        <span>Quick Jump &amp; Actions</span>
+      </span>
+      <button type="button" class="ui mini icon button q-btn-ghost cancel" aria-label="Close">
+        <i data-lucide="x" class="q-icon"></i>
+      </button>
+    </div>
+    <div class="content">
+      <div class="ui fluid input q-input-icon">
+        <i data-lucide="search" class="q-icon"></i>
+        <input type="search" id="q-cmd-input" placeholder="Search routes, interfaces, peers, services, or actions..." autocomplete="off">
+      </div>
+      <div class="q-cmd-list" id="q-cmd-list" role="listbox" aria-label="Search results"></div>
+    </div>
+    <div class="actions" style="justify-content:space-between;">
+      <span class="q-text-muted" style="font-size:12px;"><kbd>↑</kbd> <kbd>↓</kbd> navigate · <kbd>Enter</kbd> select · <kbd>Esc</kbd> close</span>
+      <button type="button" class="ui secondary cancel button">Close</button>
+    </div>
+  </div>
+
+  <!-- Shared Modal: Review & Apply Staged Changes -->
+  <div class="ui small modal" id="q-staged-modal" role="dialog" aria-labelledby="q-staged-title">
+    <div class="header">
+      <span class="q-modal-header-title" id="q-staged-title">
+        <i data-lucide="git-commit-horizontal" class="q-icon q-text-accent"></i>
+        <span>Review Staged Configuration Changes</span>
+      </span>
+      <button type="button" class="ui mini icon button q-btn-ghost cancel" aria-label="Close">
+        <i data-lucide="x" class="q-icon"></i>
+      </button>
+    </div>
+    <div class="content">
+      <p style="margin-bottom: var(--q-space-3);">
+        Applying commits these staged changes directly to <span class="q-mono">netbeed</span>. Network and firewall updates automatically arm a 60-second anti-lockout rollback timer until confirmed.
+      </p>
+      <div class="q-diff-list" id="q-staged-diff-list"></div>
+    </div>
+    <div class="actions">
+      <button type="button" class="ui basic negative button" data-q-discard-staged>Discard All</button>
+      <button type="button" class="ui secondary cancel button">Keep Editing</button>
+      <button type="button" class="ui primary button" data-q-apply-staged>Apply Changes</button>
+    </div>
+  </div>
+
+  <!-- Shared Shell Modal: Keyboard Shortcuts -->
+  <div class="ui small modal" id="q-shortcuts-modal" role="dialog" aria-labelledby="q-shortcuts-title">
+    <div class="header">
+      <span class="q-modal-header-title" id="q-shortcuts-title">
+        <i data-lucide="keyboard" class="q-icon q-text-accent"></i>
+        <span>Keyboard Shortcuts</span>
+      </span>
+      <button type="button" class="ui mini icon button q-btn-ghost cancel" aria-label="Close">
+        <i data-lucide="x" class="q-icon"></i>
+      </button>
+    </div>
+    <div class="content">
+      <div class="q-kv-list">
+        <div class="q-kv-row">
+          <span class="q-kv-label">Open Quick Command Palette</span>
+          <span class="q-kv-value"><kbd>Ctrl</kbd> + <kbd>K</kbd></span>
+        </div>
+        <div class="q-kv-row">
+          <span class="q-kv-label">Collapse / Expand Sidebar (Desktop)</span>
+          <span class="q-kv-value"><kbd>[</kbd></span>
+        </div>
+        <div class="q-kv-row">
+          <span class="q-kv-label">Toggle Dark Honey / Light Honey Theme</span>
+          <span class="q-kv-value"><kbd>Alt</kbd> + <kbd>T</kbd></span>
+        </div>
+        <div class="q-kv-row">
+          <span class="q-kv-label">Close Mobile Drawer or Active Modal</span>
+          <span class="q-kv-value"><kbd>Esc</kbd></span>
+        </div>
+      </div>
+    </div>
+    <div class="actions">
+      <button type="button" class="ui primary approve button">Done</button>
+    </div>
+  </div>
+
+  <!-- Shared Shell Modal: Session Context -->
+  <div class="ui small modal" id="q-session-modal" role="dialog" aria-labelledby="q-session-title">
+    <div class="header">
+      <span class="q-modal-header-title" id="q-session-title">
+        <i data-lucide="terminal" class="q-icon q-text-accent"></i>
+        <span>Appliance Session Context</span>
+      </span>
+      <button type="button" class="ui mini icon button q-btn-ghost cancel" aria-label="Close">
+        <i data-lucide="x" class="q-icon"></i>
+      </button>
+    </div>
+    <div class="content">
+      <div class="q-kv-list">
+        <div class="q-kv-row">
+          <span class="q-kv-label">Operator</span>
+          <span class="q-kv-value q-mono" data-q-session-user>admin</span>
+        </div>
+        <div class="q-kv-row">
+          <span class="q-kv-label">Host Identifier</span>
+          <span class="q-kv-value q-mono" data-q-fqdn-label>netbee.lan</span>
+        </div>
+        <div class="q-kv-row">
+          <span class="q-kv-label">Management Endpoint</span>
+          <span class="q-kv-value q-mono" data-q-mgmt-endpoint>192.168.10.1:443</span>
+        </div>
+        <div class="q-kv-row">
+          <span class="q-kv-label">Session Expires</span>
+          <span class="q-kv-value q-mono" data-q-session-exp>—</span>
+        </div>
+        <div class="q-kv-row">
+          <span class="q-kv-label">Control Plane</span>
+          <span class="q-kv-value"><span class="ui label q-status-success">netbeed Live HTTPS + SSE</span></span>
+        </div>
+      </div>
+    </div>
+    <div class="actions">
+      <button type="button" class="ui secondary cancel button">Close</button>
+    </div>
+  </div>
+
+  <!-- Bundled Offline Vendor Scripts: jQuery -> Fomantic-UI -> Lucide -->
+  <script src="assets/vendor/jquery.min.js"></script>
+  <script src="assets/vendor/fomantic/semantic.min.js"></script>
+  <script src="assets/vendor/lucide.min.js"></script>
+
+  <!-- Hive Core, Data Services, Router & Shell -->
+  <script src="assets/js/core/config.js"></script>
+  <script src="assets/js/core/validators.js"></script>
+  <script src="assets/js/core/formatters.js"></script>
+  <script src="assets/js/core/charts.js"></script>
+  <script src="assets/js/data/mock-db.js"></script>
+  <script src="assets/js/core/store.js"></script>
+  <script src="assets/js/data/services.js"></script>
+  <script src="assets/js/core/theme.js"></script>
+  <script src="assets/js/core/icons.js"></script>
+  <script src="assets/js/core/ui.js"></script>
+  <script src="assets/js/core/router.js"></script>
+  <script src="assets/js/layout/shell.js"></script>
+
+  <!-- Hive Feature Modules (All 16/16 Routes) -->
+  <script src="assets/js/modules/overview.js"></script>
+  <script src="assets/js/modules/flows.js"></script>
+  <script src="assets/js/modules/interfaces.js"></script>
+  <script src="assets/js/modules/firewall.js"></script>
+  <script src="assets/js/modules/routing.js"></script>
+  <script src="assets/js/modules/network-services.js"></script>
+  <script src="assets/js/modules/sqm.js"></script>
+  <script src="assets/js/modules/diagnostics.js"></script>
+  <script src="assets/js/modules/nat.js"></script>
+  <script src="assets/js/modules/vpn.js"></script>
+  <script src="assets/js/modules/adblock.js"></script>
+  <script src="assets/js/modules/settings.js"></script>
+  <script src="assets/js/modules/access.js"></script>
+  <script src="assets/js/modules/firmware.js"></script>
+  <script src="assets/js/modules/service-logs.js"></script>
+  <script src="assets/js/modules/kernel-logs.js"></script>
+</body>
+</html>

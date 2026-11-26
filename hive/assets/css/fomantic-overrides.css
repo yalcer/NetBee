@@ -1,0 +1,1702 @@
+/* ==========================================================================
+   Hive Design System — Fomantic-UI Custom Theme Overrides
+   Token-driven customization for Dark Honey (default) and Light Honey themes.
+   Every component inherits CSS variables so theme switching is instantaneous
+   across inline and body-detached Fomantic elements (modals, popups, toasts).
+   ========================================================================== */
+
+/* --------------------------------------------------------------------------
+   1. Buttons (.ui.button)
+   -------------------------------------------------------------------------- */
+
+.ui.button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--q-space-2);
+  font-family: var(--q-font-sans);
+  font-size: var(--q-text-sm);
+  font-weight: var(--q-weight-medium);
+  line-height: 1;
+  min-height: 36px;
+  padding: 0 14px;
+  border-radius: var(--q-radius-md);
+  background-color: var(--q-btn-secondary-bg);
+  color: var(--q-btn-secondary-text);
+  border: 1px solid var(--q-border);
+  box-shadow: none;
+  text-shadow: none;
+  transition:
+    background-color var(--q-transition-fast),
+    border-color var(--q-transition-fast),
+    color var(--q-transition-fast),
+    box-shadow var(--q-transition-fast);
+}
+
+.ui.button:hover {
+  background-color: var(--q-surface-hover);
+  border-color: var(--q-border-strong);
+  color: var(--q-text);
+}
+
+.ui.button:active,
+.ui.button.active {
+  background-color: var(--q-surface);
+  border-color: var(--q-primary-border);
+  color: var(--q-text);
+}
+
+.ui.button:active:not(.disabled):not(:disabled) {
+  transform: translateY(0.5px);
+}
+
+.ui.button:focus-visible {
+  outline: none;
+  box-shadow: var(--q-focus-ring);
+}
+
+/* Primary Button */
+.ui.primary.button,
+.ui.primary.buttons .button {
+  background-color: var(--q-btn-primary-bg);
+  color: var(--q-btn-primary-text);
+  border-color: var(--q-btn-primary-bg);
+  font-weight: var(--q-weight-semibold);
+}
+
+.ui.primary.button:hover,
+.ui.primary.buttons .button:hover {
+  background-color: var(--q-primary-hover);
+  border-color: var(--q-primary-hover);
+  color: var(--q-btn-primary-text);
+}
+
+.ui.primary.button:active,
+.ui.primary.button.active,
+.ui.primary.button:focus,
+.ui.primary.buttons .button:active {
+  background-color: var(--q-primary-active);
+  border-color: var(--q-primary-active);
+  color: var(--q-btn-primary-text);
+}
+
+/* Secondary Button */
+.ui.secondary.button,
+.ui.secondary.buttons .button {
+  background-color: var(--q-btn-secondary-bg);
+  color: var(--q-btn-secondary-text);
+  border-color: var(--q-border);
+}
+
+.ui.secondary.button:hover,
+.ui.secondary.buttons .button:hover {
+  background-color: var(--q-surface-hover);
+  border-color: var(--q-border-strong);
+  color: var(--q-text);
+}
+
+.ui.secondary.button:focus,
+.ui.secondary.button:active {
+  background-color: var(--q-surface);
+  color: var(--q-text);
+}
+
+/* Basic / Ghost / Outline Button */
+.ui.basic.button,
+.ui.basic.buttons .button {
+  background-color: transparent !important;
+  color: var(--q-text-secondary) !important;
+  border: 1px solid var(--q-border) !important;
+  box-shadow: none !important;
+}
+
+.ui.basic.button:hover,
+.ui.basic.buttons .button:hover {
+  background-color: var(--q-surface-hover) !important;
+  border-color: var(--q-border-strong) !important;
+  color: var(--q-text) !important;
+  box-shadow: none !important;
+}
+
+.ui.basic.primary.button {
+  color: var(--q-primary) !important;
+  border-color: var(--q-primary-border) !important;
+}
+
+.ui.basic.primary.button:hover {
+  background-color: var(--q-primary-soft) !important;
+  border-color: var(--q-primary) !important;
+  color: var(--q-primary) !important;
+}
+
+.ui.basic.negative.button,
+.ui.basic.red.button {
+  color: var(--q-danger-text) !important;
+  border-color: var(--q-danger-border) !important;
+}
+
+.ui.basic.negative.button:hover,
+.ui.basic.red.button:hover {
+  background-color: var(--q-danger-soft) !important;
+  border-color: var(--q-danger) !important;
+}
+
+/* Subtle / Borderless Ghost Modifier */
+.ui.button.q-btn-ghost {
+  background-color: transparent;
+  border-color: transparent;
+  color: var(--q-text-secondary);
+}
+
+.ui.button.q-btn-ghost:hover {
+  background-color: var(--q-surface-hover);
+  border-color: transparent;
+  color: var(--q-text);
+}
+
+/* Semantic Buttons */
+.ui.positive.button,
+.ui.green.button {
+  background-color: var(--q-success-soft);
+  color: var(--q-success-text);
+  border-color: var(--q-success-border);
+}
+
+.ui.positive.button:hover,
+.ui.green.button:hover {
+  background-color: var(--q-success);
+  color: var(--q-on-success);
+  border-color: var(--q-success);
+}
+
+.ui.warning.button,
+.ui.orange.button {
+  background-color: var(--q-warning-soft);
+  color: var(--q-warning-text);
+  border-color: var(--q-warning-border);
+}
+
+.ui.warning.button:hover,
+.ui.orange.button:hover {
+  background-color: var(--q-warning);
+  color: var(--q-on-warning);
+  border-color: var(--q-warning);
+}
+
+.ui.negative.button,
+.ui.red.button {
+  background-color: var(--q-danger-soft);
+  color: var(--q-danger-text);
+  border-color: var(--q-danger-border);
+}
+
+.ui.negative.button:hover,
+.ui.red.button:hover {
+  background-color: var(--q-danger);
+  color: var(--q-on-danger);
+  border-color: var(--q-danger);
+}
+
+/* Sizes & Icon Buttons */
+.ui.mini.button  { min-height: 28px; padding: 0 10px; font-size: var(--q-text-xs); border-radius: var(--q-radius-sm); }
+.ui.small.button { min-height: 32px; padding: 0 12px; font-size: var(--q-text-xs); border-radius: var(--q-radius-sm); }
+.ui.large.button { min-height: 42px; padding: 0 18px; font-size: var(--q-text-base); }
+
+.ui.icon.button {
+  padding: 0;
+  width: 36px;
+  min-width: 36px;
+}
+
+.ui.small.icon.button { width: 32px; min-width: 32px; }
+.ui.mini.icon.button  { width: 28px; min-width: 28px; }
+
+/* Button Group */
+.ui.buttons {
+  display: inline-flex;
+  border-radius: var(--q-radius-md);
+}
+
+.ui.buttons .button {
+  border-radius: 0;
+  margin-left: -1px;
+}
+
+.ui.buttons .button:first-child {
+  margin-left: 0;
+  border-top-left-radius: var(--q-radius-md);
+  border-bottom-left-radius: var(--q-radius-md);
+}
+
+.ui.buttons .button:last-child {
+  border-top-right-radius: var(--q-radius-md);
+  border-bottom-right-radius: var(--q-radius-md);
+}
+
+.ui.buttons .button:hover,
+.ui.buttons .button:focus-visible,
+.ui.buttons .button.active {
+  position: relative;
+  z-index: 2;
+}
+
+.ui.buttons .button.active {
+  background-color: var(--q-primary-soft);
+  border-color: var(--q-primary-border);
+  color: var(--q-primary-text);
+  font-weight: var(--q-weight-semibold);
+}
+
+/* Disabled & Loading */
+.ui.button.disabled,
+.ui.button:disabled {
+  opacity: 0.45 !important;
+  cursor: not-allowed !important;
+  pointer-events: none;
+}
+
+.ui.loading.button::before {
+  border-color: rgba(255, 255, 255, 0.25);
+}
+
+.ui.primary.loading.button::after {
+  border-top-color: var(--q-on-primary);
+}
+
+.ui.loading.button::after {
+  border-top-color: var(--q-primary);
+}
+
+/* --------------------------------------------------------------------------
+   2. Inputs (.ui.input) & Form Controls
+   -------------------------------------------------------------------------- */
+
+.ui.input {
+  color: var(--q-text);
+  font-size: var(--q-text-base);
+}
+
+.ui.input > input,
+.ui.form input:not([type]),
+.ui.form input[type="text"],
+.ui.form input[type="email"],
+.ui.form input[type="password"],
+.ui.form input[type="number"],
+.ui.form input[type="search"],
+.ui.form input[type="tel"],
+.ui.form input[type="url"],
+.ui.form input[type="date"],
+.ui.form input[type="time"],
+.ui.form textarea,
+.ui.form select {
+  font-family: var(--q-font-sans);
+  font-size: var(--q-text-base);
+  line-height: 1.4;
+  min-height: 38px;
+  padding: 8px 12px;
+  background-color: var(--q-input-bg);
+  color: var(--q-text);
+  border: 1px solid var(--q-border);
+  border-radius: var(--q-radius-md);
+  box-shadow: none;
+  transition:
+    border-color var(--q-transition-fast),
+    box-shadow var(--q-transition-fast),
+    background-color var(--q-transition-fast);
+}
+
+.ui.input.q-mono > input,
+.ui.form input.q-mono,
+.ui.form textarea.q-mono {
+  font-family: var(--q-font-mono);
+  font-size: var(--q-text-sm);
+}
+
+.ui.input > input::placeholder,
+.ui.form input::placeholder,
+.ui.form textarea::placeholder {
+  color: var(--q-text-muted);
+  opacity: 1;
+}
+
+.ui.input > input:hover,
+.ui.form input:hover,
+.ui.form textarea:hover,
+.ui.form select:hover {
+  border-color: var(--q-border-strong);
+}
+
+.ui.input > input:focus,
+.ui.input.focus > input,
+.ui.form input:focus,
+.ui.form textarea:focus,
+.ui.form select:focus {
+  background-color: var(--q-input-bg);
+  color: var(--q-text);
+  border-color: var(--q-primary);
+  box-shadow: var(--q-focus-ring);
+  outline: none;
+}
+
+/* Input with Lucide Icon */
+.ui.input.q-input-icon {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.ui.input.q-input-icon.fluid {
+  display: flex;
+  width: 100%;
+}
+
+.ui.input.q-input-icon > .q-icon,
+.ui.input.q-input-icon > svg.lucide {
+  position: absolute;
+  left: 12px;
+  color: var(--q-text-muted);
+  pointer-events: none;
+  z-index: 2;
+}
+
+.ui.input.q-input-icon > input {
+  padding-left: 36px;
+}
+
+.ui.input.q-input-icon.right-icon > .q-icon,
+.ui.input.q-input-icon.right-icon > svg.lucide {
+  left: auto;
+  right: 12px;
+}
+
+.ui.input.q-input-icon.right-icon > input {
+  padding-left: 12px;
+  padding-right: 36px;
+}
+
+/* Labeled Input */
+.ui.labeled.input > .ui.label {
+  display: inline-flex;
+  align-items: center;
+  background-color: var(--q-elevated);
+  color: var(--q-text-secondary);
+  border: 1px solid var(--q-border);
+  font-weight: var(--q-weight-medium);
+  font-size: var(--q-text-xs);
+  padding: 0 12px;
+}
+
+.ui.labeled.input:not(.right) > .ui.label {
+  border-right: 0;
+  border-radius: var(--q-radius-md) 0 0 var(--q-radius-md);
+}
+
+.ui.labeled.input:not(.right) > input {
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+}
+
+.ui.right.labeled.input > .ui.label {
+  border-left: 0;
+  border-radius: 0 var(--q-radius-md) var(--q-radius-md) 0;
+}
+
+.ui.right.labeled.input > input {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+/* Action Input */
+.ui.action.input > input {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.ui.action.input > .ui.button {
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+  margin-left: -1px;
+  min-height: 38px;
+}
+
+/* Error & Disabled Input States */
+.ui.input.error > input,
+.ui.form .field.error input,
+.ui.form .field.error textarea,
+.ui.form .field.error select,
+.ui.form .field.error .ui.selection.dropdown {
+  background-color: var(--q-input-bg) !important;
+  border-color: var(--q-danger) !important;
+  color: var(--q-text) !important;
+}
+
+.ui.input.error > input:focus,
+.ui.form .field.error input:focus,
+.ui.form .field.error textarea:focus {
+  box-shadow: var(--q-danger-focus-ring) !important;
+}
+
+.ui.input.disabled > input,
+.ui.form .disabled.field input,
+.ui.form input:disabled {
+  background-color: var(--q-elevated);
+  color: var(--q-text-disabled);
+  border-color: var(--q-border-subtle);
+  opacity: 0.72;
+  cursor: not-allowed;
+}
+
+/* --------------------------------------------------------------------------
+   3. Forms, Checkboxes, Radios & Toggles (.ui.form, .ui.checkbox)
+   -------------------------------------------------------------------------- */
+
+.ui.form {
+  font-size: var(--q-text-base);
+}
+
+.ui.form .field {
+  margin-bottom: var(--q-space-4);
+}
+
+.ui.form .field > label {
+  display: block;
+  margin-bottom: 6px;
+  font-size: var(--q-text-sm);
+  font-weight: var(--q-weight-medium);
+  color: var(--q-text);
+}
+
+.ui.form .field.error > label {
+  color: var(--q-danger-text);
+}
+
+.ui.form .required.field > label::after {
+  color: var(--q-danger);
+}
+
+.q-field-hint {
+  display: block;
+  margin-top: 5px;
+  font-size: var(--q-text-xs);
+  color: var(--q-text-muted);
+}
+
+.q-field-error {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 5px;
+  font-size: var(--q-text-xs);
+  color: var(--q-danger-text);
+}
+
+.q-field-error[hidden] {
+  display: none !important;
+}
+
+/* Checkbox Base */
+.ui.checkbox label,
+.ui.checkbox + label,
+.ui.form .field .ui.checkbox label {
+  color: var(--q-text) !important;
+  font-size: var(--q-text-base);
+  font-weight: var(--q-weight-regular);
+  cursor: pointer;
+  line-height: 1.35;
+}
+
+.ui.checkbox label:hover,
+.ui.checkbox + label:hover {
+  color: var(--q-text) !important;
+}
+
+.ui.checkbox label::before {
+  background-color: var(--q-input-bg);
+  border: 1px solid var(--q-border-strong);
+  border-radius: var(--q-radius-xs);
+  width: 17px;
+  height: 17px;
+  top: 1px;
+  transition:
+    background-color var(--q-transition-fast),
+    border-color var(--q-transition-fast),
+    box-shadow var(--q-transition-fast);
+}
+
+.ui.checkbox:hover label::before {
+  border-color: var(--q-primary);
+}
+
+.ui.checkbox input:focus ~ label::before {
+  background-color: var(--q-input-bg);
+  border-color: var(--q-primary);
+  box-shadow: var(--q-focus-ring);
+}
+
+.ui.checkbox input:checked ~ label::before {
+  background-color: var(--q-primary) !important;
+  border-color: var(--q-primary) !important;
+}
+
+.ui.checkbox input:checked ~ label::after {
+  color: var(--q-on-primary) !important;
+  top: 1px;
+  line-height: 17px;
+  transition: opacity 150ms ease, transform 150ms var(--q-ease-out);
+}
+
+.ui.checkbox input:indeterminate ~ label::before {
+  background-color: var(--q-primary-soft);
+  border-color: var(--q-primary);
+}
+
+.ui.checkbox input:indeterminate ~ label::after {
+  color: var(--q-primary) !important;
+}
+
+/* Radio Checkbox */
+.ui.radio.checkbox label::before {
+  width: 17px;
+  height: 17px;
+  border-radius: var(--q-radius-full);
+}
+
+.ui.radio.checkbox label::after {
+  width: 17px;
+  height: 17px;
+  top: 1px;
+  left: 0;
+  transition: transform 180ms var(--q-ease-out), opacity 160ms ease, background-color 160ms ease !important;
+}
+
+.ui.radio.checkbox input:checked ~ label::before {
+  background-color: var(--q-input-bg) !important;
+  border-color: var(--q-primary) !important;
+}
+
+.ui.radio.checkbox input:checked ~ label::after {
+  background-color: var(--q-primary) !important;
+  color: transparent !important;
+}
+
+/* Toggle Switch (.ui.toggle.checkbox) — GPU-accelerated smooth slide */
+.ui.toggle.checkbox {
+  min-height: 22px;
+}
+
+.ui.toggle.checkbox label {
+  padding-top: 1px;
+  padding-left: 3.4rem;
+}
+
+.ui.fitted.toggle.checkbox {
+  width: 40px;
+  min-width: 40px;
+  min-height: 22px;
+}
+
+.ui.fitted.toggle.checkbox label {
+  padding-left: 40px !important;
+  min-height: 22px;
+}
+
+.ui.toggle.checkbox label::before {
+  width: 40px;
+  height: 22px;
+  top: 0;
+  left: 0;
+  border-radius: var(--q-radius-full);
+  background-image: none !important;
+  background-color: var(--q-elevated) !important;
+  border: 1px solid var(--q-border-strong) !important;
+  transition:
+    background-color 200ms ease,
+    border-color 200ms ease,
+    box-shadow 160ms ease !important;
+}
+
+.ui.toggle.checkbox:hover input:not(:checked) ~ label::before {
+  background-color: var(--q-surface-hover) !important;
+  border-color: var(--q-primary-border) !important;
+}
+
+.ui.toggle.checkbox label::after {
+  width: 16px;
+  height: 16px;
+  top: 3px;
+  left: 3px !important;
+  border-radius: var(--q-radius-full);
+  background-image: none !important;
+  background-color: var(--q-text-secondary) !important;
+  box-shadow: none !important;
+  transform: translateX(0);
+  will-change: transform;
+  transition:
+    transform 220ms var(--q-ease-out),
+    background-color 200ms ease,
+    width 140ms ease !important;
+}
+
+.ui.toggle.checkbox:active:not(.disabled) label::after {
+  width: 19px;
+}
+
+.ui.toggle.checkbox:active:not(.disabled) input:checked ~ label::after {
+  transform: translateX(15px);
+}
+
+.ui.toggle.checkbox input:checked ~ label::before {
+  background-color: var(--q-primary) !important;
+  border-color: var(--q-primary) !important;
+}
+
+.ui.toggle.checkbox input:checked ~ label::after {
+  left: 3px !important;
+  transform: translateX(18px);
+  background-color: var(--q-on-primary) !important;
+}
+
+.ui.toggle.checkbox input:focus ~ label::before {
+  background-color: var(--q-elevated) !important;
+  border-color: var(--q-primary) !important;
+  box-shadow: var(--q-focus-ring);
+}
+
+.ui.toggle.checkbox input:focus:checked ~ label::before {
+  background-color: var(--q-primary) !important;
+  border-color: var(--q-primary) !important;
+  box-shadow: var(--q-focus-ring);
+}
+
+/* Slider Toggle (.ui.slider.checkbox) */
+.ui.slider.checkbox label::before {
+  background-image: none !important;
+  background-color: var(--q-border-strong) !important;
+  border: 0 !important;
+  height: 4px;
+  top: 8px;
+  transition: background-color 200ms ease !important;
+}
+
+.ui.slider.checkbox input:checked ~ label::before {
+  background-color: var(--q-primary) !important;
+}
+
+.ui.slider.checkbox label::after {
+  width: 20px;
+  height: 20px;
+  top: 0;
+  left: 0 !important;
+  background-image: none !important;
+  background-color: var(--q-text) !important;
+  border: 2px solid var(--q-border-strong);
+  box-shadow: var(--q-shadow-sm);
+  transform: translateX(0);
+  transition:
+    transform 220ms var(--q-ease-out),
+    background-color 200ms ease,
+    border-color 200ms ease !important;
+}
+
+.ui.slider.checkbox input:checked ~ label::after {
+  left: 0 !important;
+  transform: translateX(28px);
+  background-color: var(--q-primary) !important;
+  border-color: var(--q-primary);
+}
+
+.ui.checkbox.disabled {
+  opacity: 0.5;
+  pointer-events: none;
+  cursor: not-allowed;
+}
+
+.ui.checkbox.disabled label {
+  cursor: not-allowed !important;
+}
+
+/* --------------------------------------------------------------------------
+   4. Dropdowns (.ui.dropdown)
+   -------------------------------------------------------------------------- */
+
+.ui.selection.dropdown {
+  min-height: 38px;
+  padding: 9px 32px 9px 12px;
+  background-color: var(--q-input-bg);
+  color: var(--q-text);
+  border: 1px solid var(--q-border);
+  border-radius: var(--q-radius-md);
+  line-height: 1.35;
+  box-shadow: none;
+  transition:
+    border-color var(--q-transition-fast),
+    box-shadow var(--q-transition-fast);
+}
+
+.ui.form .field .ui.selection.dropdown {
+  min-height: 38px;
+}
+
+.ui.selection.dropdown:hover {
+  border-color: var(--q-border-strong);
+}
+
+.ui.selection.active.dropdown,
+.ui.selection.active.dropdown:hover,
+.ui.selection.dropdown:focus {
+  border-color: var(--q-primary);
+  box-shadow: var(--q-focus-ring);
+}
+
+.ui.selection.dropdown > .dropdown.icon {
+  color: var(--q-text-muted);
+  top: 0.72em;
+  right: 0.9em;
+  padding: 0;
+  margin: 0;
+}
+
+.ui.dropdown > .default.text,
+.ui.default.dropdown:not(.button) > .text {
+  color: var(--q-text-muted);
+}
+
+.ui.selection.visible.dropdown > .text:not(.default) {
+  color: var(--q-text);
+}
+
+.ui.search.dropdown > input.search,
+.ui.form .ui.search.dropdown > input.search {
+  color: var(--q-text);
+  background: transparent !important;
+  border: 0 !important;
+  box-shadow: none !important;
+  min-height: 0 !important;
+}
+
+/* Dropdown Popover Menu */
+.ui.dropdown .menu,
+.ui.selection.active.dropdown .menu,
+.ui.selection.active.dropdown:hover .menu {
+  background-color: var(--q-surface);
+  border: 1px solid var(--q-border-strong);
+  border-radius: var(--q-radius-md);
+  box-shadow: var(--q-shadow-md);
+  margin-top: 4px;
+  padding: 4px;
+  z-index: var(--q-z-dropdown);
+}
+
+.ui.selection.dropdown .menu {
+  border-top-width: 1px;
+}
+
+.ui.pointing.dropdown > .menu::after {
+  background-color: var(--q-surface) !important;
+  box-shadow: -1px -1px 0 0 var(--q-border-strong) !important;
+}
+
+.q-notif-dropdown.ui.pointing.dropdown > .menu::after {
+  background-color: var(--q-table-header) !important;
+}
+
+.ui.selection.active.dropdown.visible {
+  border-bottom-left-radius: var(--q-radius-md) !important;
+  border-bottom-right-radius: var(--q-radius-md) !important;
+}
+
+.ui.dropdown .menu > .header {
+  color: var(--q-text-muted);
+  font-size: 11px;
+  font-weight: var(--q-weight-semibold);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 8px 10px 4px;
+  margin: 0;
+}
+
+.ui.dropdown .menu > .divider {
+  border-top-color: var(--q-border-subtle);
+  margin: 4px 0;
+}
+
+.ui.dropdown .menu > .item {
+  display: flex;
+  align-items: center;
+  gap: var(--q-space-2);
+  color: var(--q-text-secondary) !important;
+  font-size: var(--q-text-sm);
+  padding: 8px 10px !important;
+  border-radius: var(--q-radius-sm);
+  border-top: 0 !important;
+  transition: background-color var(--q-transition-fast), color var(--q-transition-fast);
+}
+
+.ui.dropdown .menu > .item:hover,
+.ui.dropdown .menu > .selected.item {
+  background-color: var(--q-surface-hover) !important;
+  color: var(--q-text) !important;
+}
+
+.ui.dropdown .menu > .active.item {
+  background-color: var(--q-primary-soft) !important;
+  color: var(--q-primary) !important;
+  font-weight: var(--q-weight-medium);
+}
+
+.ui.dropdown .menu > .message {
+  color: var(--q-text-muted);
+  font-size: var(--q-text-xs);
+  padding: 10px;
+}
+
+/* Multi-select tags inside dropdown */
+.ui.multiple.selection.dropdown {
+  padding: 5px 32px 5px 8px;
+}
+
+.ui.multiple.dropdown > .label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background-color: var(--q-primary-soft);
+  color: var(--q-primary);
+  border: 1px solid var(--q-primary-border);
+  border-radius: var(--q-radius-sm);
+  box-shadow: none;
+  font-size: var(--q-text-xs);
+  font-weight: var(--q-weight-medium);
+  padding: 4px 8px;
+  margin: 2px 4px 2px 0;
+}
+
+.ui.multiple.dropdown > .label:hover {
+  background-color: var(--q-surface-hover);
+}
+
+.ui.multiple.dropdown > .label > .delete.icon {
+  opacity: 0.8;
+  margin-left: 2px;
+}
+
+/* --------------------------------------------------------------------------
+   5. Tables (.ui.table)
+   -------------------------------------------------------------------------- */
+
+.q-table-wrap {
+  width: 100%;
+  overflow-x: auto;
+  border: 1px solid var(--q-border);
+  border-radius: var(--q-radius-lg);
+  background-color: var(--q-surface);
+}
+
+.q-table-wrap > .ui.table {
+  border: 0;
+  border-radius: 0;
+  margin: 0;
+}
+
+.ui.table {
+  width: 100%;
+  background-color: var(--q-surface);
+  color: var(--q-text);
+  border: 1px solid var(--q-border);
+  border-radius: var(--q-radius-lg);
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: var(--q-text-sm);
+}
+
+.ui.table thead tr:first-child th:first-child { border-top-left-radius: var(--q-radius-lg); }
+.ui.table thead tr:first-child th:last-child  { border-top-right-radius: var(--q-radius-lg); }
+.ui.table tbody tr:last-child td:first-child  { border-bottom-left-radius: var(--q-radius-lg); }
+.ui.table tbody tr:last-child td:last-child   { border-bottom-right-radius: var(--q-radius-lg); }
+
+.q-table-wrap > .ui.table thead tr:first-child th:first-child,
+.q-table-wrap > .ui.table thead tr:first-child th:last-child,
+.q-table-wrap > .ui.table tbody tr:last-child td:first-child,
+.q-table-wrap > .ui.table tbody tr:last-child td:last-child {
+  border-radius: 0;
+}
+
+.ui.table thead th {
+  background-color: var(--q-table-header);
+  color: var(--q-text-muted);
+  font-size: 11px;
+  font-weight: var(--q-weight-semibold);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 11px 14px;
+  border-bottom: 1px solid var(--q-border);
+  border-left: 0;
+  white-space: nowrap;
+}
+
+.ui.table td {
+  padding: 11px 14px;
+  color: var(--q-text);
+  border-top: 1px solid var(--q-border-subtle);
+  border-left: 0;
+  vertical-align: middle;
+  transition: opacity 200ms ease, background-color var(--q-transition-fast);
+}
+
+.ui.table tbody tr:first-child td {
+  border-top: 0;
+}
+
+.ui.striped.table tbody tr:nth-child(2n) {
+  background-color: var(--q-table-stripe);
+}
+
+.ui.selectable.table tbody tr:hover,
+.ui.table tbody tr td.selectable:hover {
+  background-color: var(--q-surface-hover) !important;
+  color: var(--q-text) !important;
+}
+
+.ui.table tr.active,
+.ui.table td.active {
+  background-color: var(--q-primary-soft) !important;
+  color: var(--q-text) !important;
+}
+
+.ui.table tfoot th,
+.ui.table tfoot td {
+  background-color: var(--q-table-header);
+  color: var(--q-text-muted);
+  border-top: 1px solid var(--q-border);
+  padding: 10px 14px;
+}
+
+.ui.celled.table tr th,
+.ui.celled.table tr td {
+  border-left: 1px solid var(--q-border-subtle);
+}
+
+.ui.celled.table tr th:first-child,
+.ui.celled.table tr td:first-child {
+  border-left: 0;
+}
+
+/* --------------------------------------------------------------------------
+   6. Cards (.ui.card, .ui.cards)
+   -------------------------------------------------------------------------- */
+
+.ui.card,
+.ui.cards > .card {
+  background-color: var(--q-surface);
+  border: 1px solid var(--q-border);
+  border-radius: var(--q-radius-lg);
+  box-shadow: var(--q-shadow-sm);
+  color: var(--q-text);
+  transition:
+    border-color var(--q-transition-fast),
+    box-shadow var(--q-transition-fast),
+    background-color var(--q-transition-normal);
+}
+
+.ui.link.card:hover,
+.ui.link.cards > .card:hover,
+a.ui.card:hover,
+.ui.cards > a.card:hover {
+  background-color: var(--q-surface);
+  border-color: var(--q-primary-border);
+  box-shadow: var(--q-shadow-md);
+  transform: translateY(-1px);
+}
+
+.ui.card > .content,
+.ui.cards > .card > .content {
+  padding: var(--q-space-5);
+  border-top: 1px solid var(--q-border-subtle);
+}
+
+.ui.card > .content:first-child,
+.ui.cards > .card > .content:first-child {
+  border-top: 0;
+}
+
+.ui.card > .content > .header,
+.ui.cards > .card > .content > .header {
+  font-family: var(--q-font-sans);
+  font-size: var(--q-text-lg);
+  font-weight: var(--q-weight-semibold);
+  color: var(--q-text);
+  margin-bottom: 4px;
+}
+
+.ui.card .meta,
+.ui.cards > .card .meta {
+  font-size: var(--q-text-xs);
+  color: var(--q-text-muted);
+}
+
+.ui.card > .content > .description,
+.ui.cards > .card > .content > .description {
+  color: var(--q-text-secondary);
+  font-size: var(--q-text-sm);
+  margin-top: var(--q-space-2);
+  line-height: var(--q-leading-normal);
+}
+
+.ui.card > .extra,
+.ui.cards > .card > .extra {
+  background-color: var(--q-table-header);
+  color: var(--q-text-muted);
+  border-top: 1px solid var(--q-border-subtle) !important;
+  padding: var(--q-space-3) var(--q-space-5);
+  border-bottom-left-radius: var(--q-radius-lg);
+  border-bottom-right-radius: var(--q-radius-lg);
+}
+
+/* --------------------------------------------------------------------------
+   7. Labels & Status / Network Badges (.ui.label)
+   -------------------------------------------------------------------------- */
+
+.ui.label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--q-font-sans);
+  font-size: var(--q-text-xs);
+  font-weight: var(--q-weight-medium);
+  line-height: 1.2;
+  padding: 4px 9px;
+  border-radius: var(--q-radius-full);
+  background-color: var(--q-elevated);
+  color: var(--q-text-secondary);
+  border: 1px solid var(--q-border);
+  vertical-align: middle;
+}
+
+.ui.label.q-mono {
+  font-family: var(--q-font-mono);
+  font-size: 11px;
+}
+
+.ui.label.q-badge-square {
+  border-radius: var(--q-radius-sm);
+}
+
+/* Semantic Labels */
+.ui.primary.label,
+.ui.teal.label {
+  background-color: var(--q-primary-soft) !important;
+  color: var(--q-primary) !important;
+  border-color: var(--q-primary-border) !important;
+}
+
+.ui.green.label,
+.ui.positive.label,
+.ui.label.q-status-success {
+  background-color: var(--q-success-soft) !important;
+  color: var(--q-success-text) !important;
+  border-color: var(--q-success-border) !important;
+}
+
+.ui.orange.label,
+.ui.yellow.label,
+.ui.warning.label,
+.ui.label.q-status-warning {
+  background-color: var(--q-warning-soft) !important;
+  color: var(--q-warning-text) !important;
+  border-color: var(--q-warning-border) !important;
+}
+
+.ui.red.label,
+.ui.negative.label,
+.ui.label.q-status-danger {
+  background-color: var(--q-danger-soft) !important;
+  color: var(--q-danger-text) !important;
+  border-color: var(--q-danger-border) !important;
+}
+
+.ui.blue.label,
+.ui.info.label,
+.ui.label.q-status-info {
+  background-color: var(--q-info-soft) !important;
+  color: var(--q-info-text) !important;
+  border-color: var(--q-info-border) !important;
+}
+
+/* Network Domain Badges (using Hive Honey network palette tokens) */
+.ui.label.q-net-wan {
+  background-color: var(--q-wan-soft);
+  color: var(--q-wan);
+  border-color: var(--q-wan-border);
+}
+
+.ui.label.q-net-lan {
+  background-color: var(--q-lan-soft);
+  color: var(--q-lan);
+  border-color: var(--q-lan-border);
+}
+
+.ui.label.q-net-vlan {
+  background-color: var(--q-vlan-soft);
+  color: var(--q-vlan);
+  border-color: var(--q-vlan-border);
+}
+
+.ui.label.q-net-vpn {
+  background-color: var(--q-vpn-soft);
+  color: var(--q-vpn);
+  border-color: var(--q-vpn-border);
+}
+
+.ui.label.q-net-wireless {
+  background-color: var(--q-wireless-soft);
+  color: var(--q-wireless);
+  border-color: var(--q-wireless-border);
+}
+
+.ui.label.q-net-firewall {
+  background-color: var(--q-firewall-soft);
+  color: var(--q-firewall);
+  border-color: var(--q-firewall-border);
+}
+
+.ui.label.q-net-ipv6 {
+  background-color: var(--q-ipv6-soft);
+  color: var(--q-ipv6);
+  border-color: var(--q-ipv6-border);
+}
+
+/* --------------------------------------------------------------------------
+   8. Modals & Dimmers (.ui.modal, .ui.dimmer)
+   -------------------------------------------------------------------------- */
+
+.ui.dimmer {
+  background-color: var(--q-overlay);
+}
+
+.ui.modal {
+  background-color: var(--q-surface);
+  border: 1px solid var(--q-border-strong);
+  border-radius: var(--q-radius-lg);
+  box-shadow: var(--q-shadow-lg);
+  color: var(--q-text);
+  overflow: visible;
+}
+
+.ui.modal > .header,
+.ui.modal > .header:not(.ui) {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--q-space-3);
+  background-color: var(--q-surface);
+  color: var(--q-text);
+  font-family: var(--q-font-sans);
+  font-size: var(--q-text-lg);
+  font-weight: var(--q-weight-semibold);
+  padding: var(--q-space-4) var(--q-space-5);
+  border-bottom: 1px solid var(--q-border-subtle);
+  border-top-left-radius: var(--q-radius-lg);
+  border-top-right-radius: var(--q-radius-lg);
+}
+
+.ui.modal > .content {
+  background-color: var(--q-surface);
+  color: var(--q-text-secondary);
+  padding: var(--q-space-5);
+  font-size: var(--q-text-base);
+  overflow: visible;
+}
+
+.ui.modal > .actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--q-space-2);
+  background-color: var(--q-table-header);
+  padding: var(--q-space-3) var(--q-space-5);
+  border-top: 1px solid var(--q-border-subtle);
+  border-bottom-left-radius: var(--q-radius-lg);
+  border-bottom-right-radius: var(--q-radius-lg);
+}
+
+.ui.modal > .actions > .button {
+  margin-left: 0;
+}
+
+.ui.modal > .close {
+  color: var(--q-text-muted);
+  opacity: 0.85;
+}
+
+.ui.modal > .close:hover {
+  color: var(--q-text);
+  opacity: 1;
+}
+
+.q-modal-header-title {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--q-space-2);
+}
+
+/* --------------------------------------------------------------------------
+   9. Notifications — Alerts (.ui.message) & Toasts (.ui.toast)
+   -------------------------------------------------------------------------- */
+
+.ui.message {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: var(--q-space-3);
+  background-color: var(--q-elevated);
+  color: var(--q-text-secondary);
+  border: 1px solid var(--q-border);
+  border-radius: var(--q-radius-md);
+  box-shadow: none;
+  padding: var(--q-space-3) var(--q-space-4);
+  margin: 0;
+  line-height: var(--q-leading-normal);
+}
+
+.ui.message .q-message-icon {
+  margin-top: 2px;
+  flex-shrink: 0;
+}
+
+.ui.message .q-message-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.ui.message .header {
+  font-family: var(--q-font-sans);
+  font-size: var(--q-text-sm);
+  font-weight: var(--q-weight-semibold);
+  color: var(--q-text);
+  margin-bottom: 2px;
+}
+
+.ui.message p {
+  margin: 0;
+  font-size: var(--q-text-sm);
+  color: inherit;
+}
+
+.ui.message > .q-message-close {
+  background: transparent;
+  border: 0;
+  color: currentColor;
+  opacity: 0.7;
+  cursor: pointer;
+  padding: 2px;
+  border-radius: var(--q-radius-xs);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: opacity var(--q-transition-fast), background-color var(--q-transition-fast);
+}
+
+.ui.message > .q-message-close:hover {
+  opacity: 1;
+  background-color: rgba(128, 128, 128, 0.14);
+}
+
+/* Semantic Alert Variants */
+.ui.info.message {
+  background-color: var(--q-info-soft);
+  border-color: var(--q-info-border);
+  color: var(--q-info-text);
+  box-shadow: none;
+}
+
+.ui.info.message .header { color: var(--q-info-text); }
+
+.ui.positive.message,
+.ui.success.message {
+  background-color: var(--q-success-soft);
+  border-color: var(--q-success-border);
+  color: var(--q-success-text);
+  box-shadow: none;
+}
+
+.ui.positive.message .header,
+.ui.success.message .header { color: var(--q-success-text); }
+
+.ui.warning.message {
+  background-color: var(--q-warning-soft);
+  border-color: var(--q-warning-border);
+  color: var(--q-warning-text);
+  box-shadow: none;
+}
+
+.ui.warning.message .header { color: var(--q-warning-text); }
+
+.ui.negative.message,
+.ui.error.message {
+  background-color: var(--q-danger-soft);
+  border-color: var(--q-danger-border);
+  color: var(--q-danger-text);
+  box-shadow: none;
+}
+
+.ui.negative.message .header,
+.ui.error.message .header { color: var(--q-danger-text); }
+
+/* Fomantic Toast Notifications (anchored top-right below topbar so bottom-right dock stays unobstructed) */
+.ui.toast-container {
+  z-index: var(--q-z-toast);
+}
+
+.ui.top.right.toast-container {
+  top: calc(var(--q-header-height) + 12px);
+  right: 18px;
+}
+
+.ui.toast-container .toast-box {
+  border-radius: var(--q-radius-md);
+  box-shadow: var(--q-shadow-lg);
+}
+
+.ui.toast-container .toast-box > .ui.toast {
+  background-color: var(--q-surface) !important;
+  color: var(--q-text) !important;
+  border: 1px solid var(--q-border-strong) !important;
+  border-left-width: 3px !important;
+  border-left-color: var(--q-primary) !important;
+  border-radius: var(--q-radius-md) !important;
+  padding: 12px 14px;
+  font-family: var(--q-font-sans);
+  box-shadow: none;
+}
+
+.ui.toast-container .toast-box > .ui.toast .header,
+.ui.toast-container .toast-box > .ui.toast .ui.header {
+  color: var(--q-text) !important;
+  font-size: var(--q-text-sm);
+  font-weight: var(--q-weight-semibold);
+}
+
+.ui.toast-container .toast-box > .ui.toast .content,
+.ui.toast-container .toast-box > .ui.toast .message {
+  color: var(--q-text-secondary) !important;
+  font-size: var(--q-text-sm);
+}
+
+.ui.toast-container .toast-box > .ui.toast .ui.attached.progress {
+  border: 0 !important;
+  background: transparent !important;
+  height: 3px !important;
+}
+
+.ui.toast-container .toast-box > .ui.toast .ui.attached.progress .bar {
+  height: 3px !important;
+}
+
+.ui.toast-container .toast-box > .ui.toast.success {
+  border-left-color: var(--q-success) !important;
+}
+
+.ui.toast-container .toast-box > .ui.toast.warning {
+  border-left-color: var(--q-warning) !important;
+}
+
+.ui.toast-container .toast-box > .ui.toast.error {
+  border-left-color: var(--q-danger) !important;
+}
+
+.ui.toast-container .toast-box > .ui.toast.info {
+  border-left-color: var(--q-info) !important;
+}
+
+.ui.toast-container .toast-box > .ui.toast .ui.progress .bar {
+  background-color: var(--q-primary) !important;
+}
+
+.ui.toast-container .toast-box > .ui.toast.success .ui.progress .bar { background-color: var(--q-success) !important; }
+.ui.toast-container .toast-box > .ui.toast.warning .ui.progress .bar { background-color: var(--q-warning) !important; }
+.ui.toast-container .toast-box > .ui.toast.error .ui.progress .bar   { background-color: var(--q-danger) !important; }
+.ui.toast-container .toast-box > .ui.toast.info .ui.progress .bar    { background-color: var(--q-info) !important; }
+
+/* --------------------------------------------------------------------------
+   10. Menus (.ui.menu) & Pagination
+   -------------------------------------------------------------------------- */
+
+.ui.menu {
+  background-color: var(--q-surface);
+  border: 1px solid var(--q-border);
+  border-radius: var(--q-radius-md);
+  box-shadow: none;
+  font-family: var(--q-font-sans);
+  font-size: var(--q-text-sm);
+}
+
+.ui.menu .item {
+  color: var(--q-text-secondary);
+  gap: var(--q-space-2);
+  transition: background-color var(--q-transition-fast), color var(--q-transition-fast);
+}
+
+.ui.menu .item::before {
+  background: var(--q-border-subtle);
+}
+
+.ui.menu a.item:hover,
+.ui.link.menu .item:hover {
+  background-color: var(--q-surface-hover);
+  color: var(--q-text);
+}
+
+.ui.menu .active.item,
+.ui.menu .active.item:hover {
+  background-color: var(--q-primary-soft);
+  color: var(--q-primary);
+  font-weight: var(--q-weight-medium);
+}
+
+.ui.secondary.vertical.menu {
+  background: transparent;
+  border: 0;
+}
+
+.ui.secondary.vertical.menu .item {
+  border-radius: var(--q-radius-md);
+  margin-bottom: 2px;
+  padding: 9px 12px;
+}
+
+.ui.secondary.vertical.menu .active.item {
+  background-color: var(--q-primary-soft);
+  color: var(--q-primary);
+}
+
+/* --------------------------------------------------------------------------
+   11. Sidebar (Fomantic .ui.sidebar utility override)
+   -------------------------------------------------------------------------- */
+
+.ui.sidebar {
+  background-color: var(--q-sidebar);
+  border-right: 1px solid var(--q-border);
+  box-shadow: var(--q-shadow-lg);
+}
+
+/* --------------------------------------------------------------------------
+   12. Tabs (.ui.tabular.menu, .ui.secondary.pointing.menu, .ui.tab.segment)
+   -------------------------------------------------------------------------- */
+
+.ui.secondary.pointing.menu {
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--q-border);
+  border-radius: 0;
+  margin-bottom: 0;
+}
+
+.ui.secondary.pointing.menu .item {
+  color: var(--q-text-secondary);
+  padding: 10px 14px;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  font-weight: var(--q-weight-medium);
+}
+
+.ui.secondary.pointing.menu a.item:hover {
+  background: transparent;
+  color: var(--q-text);
+}
+
+.ui.secondary.pointing.menu .active.item,
+.ui.secondary.pointing.menu .active.item:hover {
+  background: transparent;
+  color: var(--q-primary);
+  border-bottom-color: var(--q-primary);
+  font-weight: var(--q-weight-semibold);
+}
+
+.ui.tabular.menu {
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--q-border);
+  border-radius: 0;
+}
+
+.ui.tabular.menu .item {
+  color: var(--q-text-secondary);
+  border-radius: var(--q-radius-md) var(--q-radius-md) 0 0;
+  padding: 9px 16px;
+}
+
+.ui.tabular.menu .item:hover {
+  color: var(--q-text);
+}
+
+.ui.tabular.menu .active.item {
+  background-color: var(--q-surface);
+  color: var(--q-primary);
+  border-color: var(--q-border);
+  border-bottom-color: var(--q-surface);
+  font-weight: var(--q-weight-semibold);
+}
+
+.ui.segment,
+.ui.tab.segment {
+  background-color: var(--q-surface);
+  color: var(--q-text);
+  border: 1px solid var(--q-border);
+  border-radius: var(--q-radius-md);
+  box-shadow: none;
+  padding: var(--q-space-5);
+}
+
+.ui.attached.segment,
+.ui.bottom.attached.tab.segment {
+  border-color: var(--q-border);
+  border-top: 0;
+  border-radius: 0 0 var(--q-radius-md) var(--q-radius-md);
+  margin: 0;
+}
+
+.ui.tab.q-tab-plain {
+  padding: var(--q-space-4) 0 0;
+  border: 0;
+  background: transparent;
+}
+
+.ui.tab.active {
+  animation: qViewEnter 160ms var(--q-ease-out) backwards;
+}
+
+/* --------------------------------------------------------------------------
+   13. Tooltips & Popups (.ui.popup)
+   -------------------------------------------------------------------------- */
+
+.ui.popup {
+  background-color: var(--q-elevated);
+  color: var(--q-text);
+  border: 1px solid var(--q-border-strong);
+  border-radius: var(--q-radius-sm);
+  box-shadow: var(--q-shadow-md);
+  font-family: var(--q-font-sans);
+  font-size: var(--q-text-xs);
+  line-height: 1.45;
+  padding: 7px 10px;
+  z-index: var(--q-z-tooltip);
+}
+
+.ui.popup > .header {
+  font-family: var(--q-font-sans);
+  font-size: var(--q-text-xs);
+  font-weight: var(--q-weight-semibold);
+  color: var(--q-text);
+  margin-bottom: 3px;
+}
+
+.ui.popup::before {
+  background-color: var(--q-elevated) !important;
+  box-shadow: 1px 1px 0 0 var(--q-border-strong) !important;
+}
+
+.ui.bottom.popup::before {
+  box-shadow: -1px -1px 0 0 var(--q-border-strong) !important;
+}
+
+.ui.left.center.popup::before {
+  box-shadow: 1px -1px 0 0 var(--q-border-strong) !important;
+}
+
+.ui.right.center.popup::before {
+  box-shadow: -1px 1px 0 0 var(--q-border-strong) !important;
+}
+
+/* CSS-only [data-tooltip] fallback styling */
+[data-tooltip]::after {
+  background-color: var(--q-elevated);
+  color: var(--q-text);
+  border: 1px solid var(--q-border-strong);
+  border-radius: var(--q-radius-sm);
+  box-shadow: var(--q-shadow-md);
+  font-family: var(--q-font-sans);
+  font-size: var(--q-text-xs);
+  font-weight: var(--q-weight-medium);
+}
+
+[data-tooltip]::before {
+  background-color: var(--q-elevated);
+  box-shadow: 1px 1px 0 0 var(--q-border-strong);
+}
+
+/* --------------------------------------------------------------------------
+   14. Progress Indicators & Loaders (.ui.progress, .ui.loader)
+   -------------------------------------------------------------------------- */
+
+.ui.progress {
+  background-color: var(--q-elevated);
+  border: 1px solid var(--q-border-subtle);
+  border-radius: var(--q-radius-full);
+  margin: 0 0 var(--q-space-3);
+  overflow: visible;
+}
+
+.ui.progress .bar {
+  background-color: var(--q-primary);
+  border-radius: var(--q-radius-full);
+  height: 10px;
+  min-width: 0;
+  transition: width 320ms var(--q-ease-out), background-color var(--q-transition-normal);
+}
+
+.ui.small.progress .bar { height: 8px; }
+.ui.tiny.progress .bar  { height: 5px; }
+.ui.large.progress .bar { height: 14px; }
+
+.ui.progress .bar > .progress {
+  font-family: var(--q-font-mono);
+  font-size: 10px;
+  font-weight: var(--q-weight-semibold);
+  color: var(--q-on-primary);
+  right: 8px;
+}
+
+.ui.progress > .label {
+  font-size: var(--q-text-xs);
+  font-weight: var(--q-weight-medium);
+  color: var(--q-text-secondary);
+  text-align: left;
+  margin-top: 6px;
+}
+
+.ui.progress.success .bar,
+.ui.progress.green .bar {
+  background-color: var(--q-success) !important;
+}
+
+.ui.progress.warning .bar,
+.ui.progress.orange .bar {
+  background-color: var(--q-warning) !important;
+}
+
+.ui.progress.error .bar,
+.ui.progress.red .bar {
+  background-color: var(--q-danger) !important;
+}
+
+.ui.progress.info .bar,
+.ui.progress.blue .bar {
+  background-color: var(--q-info) !important;
+}
+
+.ui.progress.success > .label { color: var(--q-success-text); }
+.ui.progress.warning > .label { color: var(--q-warning-text); }
+.ui.progress.error > .label   { color: var(--q-danger-text); }
+
+/* Fomantic Loader */
+.ui.loader {
+  color: var(--q-text-secondary);
+}
+
+.ui.loader::before {
+  border-color: var(--q-border);
+}
+
+.ui.loader::after {
+  border-color: var(--q-primary) transparent transparent;
+}
+
