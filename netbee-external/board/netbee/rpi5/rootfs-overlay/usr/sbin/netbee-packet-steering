@@ -1,0 +1,112 @@
+#!/bin/sh
+# NetBee OS - Multi-Core Receive/Transmit Packet Steering (RPS / RFS / XPS)
+# Offloads softirq packet processing (PPPoE, VLAN, NAT, CAKE) across secondary
+# Cortex-A76 cores so CPU0 (which handles RP1 eth0 + xHCI USB3 hardware IRQs) never bottlenecks.
+
+FLOW_ENTRIES=32768
+
+count_cpus() {
+	c=0
+	for d in /sys/devices/system/cpu/cpu[0-9]*; do
+		[ -d "$d" ] && c=$((c + 1))
+	done
+	[ "$c" -gt 0 ] || c=1
+	echo "$c"
+}
+
+compute_mask() {
+	ncpus="$1"
+	if [ "$ncpus" -le 1 ]; then
+		echo "0"
+		return
+	fi
+	if [ "$ncpus" -ge 32 ]; then
+		ncpus=31
+	fi
+	# Bitmask of CPU1..CPU(N-1) (e.g. 4 cores -> 0xe = CPU1,CPU2,CPU3)
+	val=$(( (1 << ncpus) - 2 ))
+	printf "%x" "$val"
+}
+
+apply_rps() {
+	ncpus="$(count_cpus)"
+	mask="$(compute_mask "$ncpus")"
+	if [ "$mask" = "0" ]; then
+		echo "Packet steering skipped (single-CPU system)."
+		return 0
+	fi
+
+	[ -w /proc/sys/net/core/rps_sock_flow_entries ] && \
+		echo "$FLOW_ENTRIES" > /proc/sys/net/core/rps_sock_flow_entries 2>/dev/null || true
+
+	rxq_total=0
+	for q in /sys/class/net/*/queues/rx-*; do
+		[ -d "$q" ] || continue
+		dev="${q#/sys/class/net/}"
+		dev="${dev%%/queues/*}"
+		case "$dev" in
+			lo|ifb*) continue ;;
+		esac
+		rxq_total=$((rxq_total + 1))
+	done
+	[ "$rxq_total" -gt 0 ] || rxq_total=1
+	per_q=$((FLOW_ENTRIES / rxq_total))
+	[ "$per_q" -ge 1024 ] || per_q=1024
+
+	for devpath in /sys/class/net/*; do
+		[ -e "$devpath" ] || continue
+		dev="${devpath##*/}"
+		case "$dev" in
+			lo|ifb*) continue ;;
+		esac
+		for rxq in "$devpath"/queues/rx-*; do
+			[ -d "$rxq" ] || continue
+			[ -w "$rxq/rps_cpus" ] && echo "$mask" > "$rxq/rps_cpus" 2>/dev/null || true
+			[ -w "$rxq/rps_flow_cnt" ] && echo "$per_q" > "$rxq/rps_flow_cnt" 2>/dev/null || true
+		done
+		for txq in "$devpath"/queues/tx-*; do
+			[ -d "$txq" ] || continue
+			[ -w "$txq/xps_cpus" ] && echo "$mask" > "$txq/xps_cpus" 2>/dev/null || true
+		done
+	done
+
+	echo "Packet steering active (cpus=$ncpus, rps_mask=0x$mask, flow_entries=$FLOW_ENTRIES)."
+}
+
+disable_rps() {
+	[ -w /proc/sys/net/core/rps_sock_flow_entries ] && \
+		echo 0 > /proc/sys/net/core/rps_sock_flow_entries 2>/dev/null || true
+	for devpath in /sys/class/net/*; do
+		[ -e "$devpath" ] || continue
+		for rxq in "$devpath"/queues/rx-*; do
+			[ -d "$rxq" ] || continue
+			[ -w "$rxq/rps_cpus" ] && echo 0 > "$rxq/rps_cpus" 2>/dev/null || true
+			[ -w "$rxq/rps_flow_cnt" ] && echo 0 > "$rxq/rps_flow_cnt" 2>/dev/null || true
+		done
+	done
+	echo "Packet steering disabled."
+}
+
+status_rps() {
+	entries="$(cat /proc/sys/net/core/rps_sock_flow_entries 2>/dev/null || echo 0)"
+	echo "rps_sock_flow_entries = $entries"
+	for q in /sys/class/net/*/queues/rx-*/rps_cpus; do
+		[ -r "$q" ] && printf "%s = %s\n" "$q" "$(cat "$q" 2>/dev/null)"
+	done
+}
+
+case "${1:-start}" in
+	start|reload|restart)
+		apply_rps
+		;;
+	stop)
+		disable_rps
+		;;
+	status)
+		status_rps
+		;;
+	*)
+		echo "Usage: $0 {start|stop|restart|reload|status}"
+		exit 1
+		;;
+esac

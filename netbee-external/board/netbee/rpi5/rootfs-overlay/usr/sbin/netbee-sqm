@@ -1,20 +1,51 @@
 #!/bin/sh
 # NetBee OS - SQM (CAKE) Anti-Bufferbloat Manager
 
+NETIF_ENV="/etc/netbee/netif.env"
 CONF="/etc/netbee/sqm.conf"
 IFB="ifb0"
 
+PHYS_WAN_IF="eth1"
+LOGICAL_WAN_IF="eth1"
+NET_WAN_MODE="dhcp"
+if [ -r "$NETIF_ENV" ]; then
+	. "$NETIF_ENV"
+	PHYS_WAN_IF="${WAN_IF:-eth1}"
+	LOGICAL_WAN_IF="${WAN_LOGICAL_IF:-$PHYS_WAN_IF}"
+	NET_WAN_MODE="${WAN_MODE:-dhcp}"
+fi
+
+WAN_IF=""
 [ -r "$CONF" ] && . "$CONF"
 
-WAN_IF="${WAN_IF:-eth1}"
 DOWNLOAD_KBIT="${DOWNLOAD_KBIT:-95000}"
 UPLOAD_KBIT="${UPLOAD_KBIT:-19000}"
 OVERHEAD="${OVERHEAD:-44}"
 ENABLED="${ENABLED:-0}"
 
+resolve_target_iface() {
+	if [ "$NET_WAN_MODE" = "pppoe" ] || [ "$NET_WAN_MODE" = "ont_vlan" ]; then
+		if [ -z "$WAN_IF" ] || [ "$WAN_IF" = "auto" ] || [ "$WAN_IF" = "$PHYS_WAN_IF" ] || [ "$WAN_IF" = "$LOGICAL_WAN_IF" ]; then
+			echo "ppp0"
+			return
+		fi
+	else
+		if [ -z "$WAN_IF" ] || [ "$WAN_IF" = "auto" ] || [ "$WAN_IF" = "ppp0" ] || [ "$WAN_IF" = "$PHYS_WAN_IF" ]; then
+			echo "$LOGICAL_WAN_IF"
+			return
+		fi
+	fi
+	echo "$WAN_IF"
+}
+
+EFF_WAN_IF="$(resolve_target_iface)"
+
 stop_sqm() {
-	tc qdisc del dev "$WAN_IF" root 2>/dev/null || true
-	tc qdisc del dev "$WAN_IF" ingress 2>/dev/null || true
+	for dev in "$EFF_WAN_IF" "$WAN_IF" "$LOGICAL_WAN_IF" "$PHYS_WAN_IF" "ppp0"; do
+		[ -n "$dev" ] || continue
+		tc qdisc del dev "$dev" root 2>/dev/null || true
+		tc qdisc del dev "$dev" ingress 2>/dev/null || true
+	done
 	tc qdisc del dev "$IFB" root 2>/dev/null || true
 	ip link set dev "$IFB" down 2>/dev/null || true
 	ip link del dev "$IFB" 2>/dev/null || true
@@ -25,37 +56,37 @@ start_sqm() {
 		echo "SQM disabled in $CONF (set ENABLED=1 to activate)."
 		return 0
 	fi
-	if [ ! -d "/sys/class/net/$WAN_IF" ]; then
-		echo "SQM skipped: WAN interface '$WAN_IF' not found."
+	if [ ! -d "/sys/class/net/$EFF_WAN_IF" ]; then
+		echo "SQM deferred: WAN interface '$EFF_WAN_IF' not up yet (will activate on link/ip-up)."
 		return 0
 	fi
 
 	stop_sqm
 
-	# Disable nftables software flow offload so packets are not bypassed past CAKE qdiscs
+	# Disable nftables software flow offload so packets traverse CAKE queues
 	if /usr/sbin/nft list flowtable inet netbee_fw fastpath >/dev/null 2>&1; then
 		/etc/init.d/S42nft-offload stop >/dev/null 2>&1 || true
 	fi
 
-	# Egress (Upload) shaping with CAKE
-	tc qdisc replace dev "$WAN_IF" root cake \
-		bandwidth "${UPLOAD_KBIT}kbit" diffserv4 dual-srchost nat wash overhead "$OVERHEAD"
+	# Egress (Upload) shaping with CAKE (preserve ISP DSCP via nowash, split-gso for low latency)
+	tc qdisc replace dev "$EFF_WAN_IF" root cake \
+		bandwidth "${UPLOAD_KBIT}kbit" diffserv4 dual-srchost nat nowash split-gso overhead "$OVERHEAD"
 
-	# Ingress (Download) shaping via IFB + CAKE
+	# Ingress (Download) shaping via IFB + CAKE (wash inbound ISP DSCP markings)
 	ip link add name "$IFB" type ifb 2>/dev/null || true
 	ip link set dev "$IFB" up
-	tc qdisc add dev "$WAN_IF" handle ffff: ingress
-	tc filter add dev "$WAN_IF" parent ffff: protocol all u32 match u32 0 0 \
+	tc qdisc add dev "$EFF_WAN_IF" handle ffff: ingress
+	tc filter add dev "$EFF_WAN_IF" parent ffff: protocol all u32 match u32 0 0 \
 		action mirred egress redirect dev "$IFB"
 	tc qdisc replace dev "$IFB" root cake \
-		bandwidth "${DOWNLOAD_KBIT}kbit" diffserv4 dual-dsthost nat ingress overhead "$OVERHEAD"
+		bandwidth "${DOWNLOAD_KBIT}kbit" diffserv4 dual-dsthost nat wash ingress split-gso overhead "$OVERHEAD"
 
-	echo "SQM (CAKE) active on $WAN_IF (down=${DOWNLOAD_KBIT}kbit, up=${UPLOAD_KBIT}kbit, overhead=${OVERHEAD})."
+	echo "SQM (CAKE) active on $EFF_WAN_IF (down=${DOWNLOAD_KBIT}kbit, up=${UPLOAD_KBIT}kbit, overhead=${OVERHEAD})."
 }
 
 status_sqm() {
-	echo "=== Egress ($WAN_IF) ==="
-	tc -s qdisc show dev "$WAN_IF" 2>/dev/null || echo "  (not found)"
+	echo "=== Egress ($EFF_WAN_IF) ==="
+	tc -s qdisc show dev "$EFF_WAN_IF" 2>/dev/null || echo "  (not found)"
 	echo "=== Ingress ($IFB) ==="
 	tc -s qdisc show dev "$IFB" 2>/dev/null || echo "  (inactive)"
 }

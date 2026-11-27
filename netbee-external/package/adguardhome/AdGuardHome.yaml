@@ -17,8 +17,11 @@ dns:
   bootstrap_dns:
     - 1.1.1.1
     - 9.9.9.9
-  cache_size: 4194304
+  upstream_mode: parallel
+  fastest_timeout: 1s
+  cache_size: 67108864
   cache_optimistic: true
+  enable_dnssec: true
   protection_enabled: true
   filtering_enabled: true
 querylog:

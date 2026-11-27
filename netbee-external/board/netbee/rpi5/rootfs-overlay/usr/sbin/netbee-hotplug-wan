@@ -11,6 +11,10 @@ WAN_IF="eth1"
 	sleep 2
 	[ -d "/sys/class/net/$WAN_IF" ] || exit 0
 
+	if [ -x /usr/sbin/netbee-packet-steering ]; then
+		/usr/sbin/netbee-packet-steering start >/dev/null 2>&1 || true
+	fi
+
 	if pidof vnstatd >/dev/null 2>&1; then
 		/usr/bin/vnstat --add -i "$WAN_IF" >/dev/null 2>&1 || true
 	fi

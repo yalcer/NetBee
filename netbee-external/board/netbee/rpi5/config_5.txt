@@ -8,6 +8,7 @@ dtoverlay=disable-wifi
 dtoverlay=disable-bt
 dtparam=audio=off
 
-# Enable PCIe interface (for 2.5G PCIe NIC / NVMe HAT) and full USB current (for USB-Ethernet)
+# Enable maximum firmware-supported Cortex-A76 boost clock, PCIe lane, and full USB 3.0 current (for 2.5G USB NICs)
+arm_boost=1
 dtparam=pciex1
 usb_max_current_enable=1

@@ -4,10 +4,16 @@
 IFACE="$1"
 [ -n "$IFACE" ] || exit 0
 
+PHYS_WAN="eth1"
+if [ -r /etc/netbee/netif.env ]; then
+	. /etc/netbee/netif.env
+	PHYS_WAN="${WAN_IF:-eth1}"
+fi
+
 if [ -r /etc/netbee/sqm.conf ]; then
 	WAN_IF=""
 	. /etc/netbee/sqm.conf
-	if [ "$WAN_IF" = "$IFACE" ]; then
+	if [ -z "$WAN_IF" ] || [ "$WAN_IF" = "auto" ] || [ "$WAN_IF" = "$IFACE" ] || [ "$WAN_IF" = "$PHYS_WAN" ]; then
 		/usr/sbin/netbee-sqm stop >/dev/null 2>&1 || true
 	fi
 fi

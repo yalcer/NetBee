@@ -4,17 +4,32 @@
 IFACE="$1"
 [ -n "$IFACE" ] || exit 0
 
+if [ -x /usr/sbin/netbee-packet-steering ]; then
+	/usr/sbin/netbee-packet-steering start >/dev/null 2>&1 || true
+fi
+
 if pidof vnstatd >/dev/null 2>&1; then
 	/usr/bin/vnstat --add -i "$IFACE" >/dev/null 2>&1 || true
+fi
+
+PHYS_WAN="eth1"
+if [ -r /etc/netbee/netif.env ]; then
+	. /etc/netbee/netif.env
+	PHYS_WAN="${WAN_IF:-eth1}"
 fi
 
 if [ -r /etc/netbee/sqm.conf ]; then
 	ENABLED=0
 	WAN_IF=""
 	. /etc/netbee/sqm.conf
-	if [ "$ENABLED" = "1" ] && [ "$WAN_IF" = "$IFACE" ]; then
-		/usr/sbin/netbee-sqm restart >/dev/null 2>&1 || true
+	if [ "$ENABLED" = "1" ]; then
+		if [ -z "$WAN_IF" ] || [ "$WAN_IF" = "auto" ] || [ "$WAN_IF" = "$IFACE" ] || [ "$WAN_IF" = "$PHYS_WAN" ]; then
+			/usr/sbin/netbee-sqm restart >/dev/null 2>&1 || true
+			exit 0
+		fi
 	fi
 fi
+
+/etc/init.d/S42nft-offload start >/dev/null 2>&1 || true
 
 exit 0

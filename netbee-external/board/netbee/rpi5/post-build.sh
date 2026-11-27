@@ -52,12 +52,14 @@ chmod 0700 "${TARGET_DIR}/root/.ssh" "${TARGET_DIR}/home/netbee/.ssh" "${TARGET_
 for script in \
 	"${TARGET_DIR}/etc/init.d/S12firstboot-resize" \
 	"${TARGET_DIR}/etc/init.d/S15watchdog" \
+	"${TARGET_DIR}/etc/init.d/S18packet-steering" \
 	"${TARGET_DIR}/etc/init.d/S42nft-offload" \
 	"${TARGET_DIR}/etc/init.d/S45sqm" \
 	"${TARGET_DIR}/etc/init.d/S86vnstatd" \
 	"${TARGET_DIR}/etc/ppp/ip-up" \
 	"${TARGET_DIR}/etc/ppp/ip-down" \
 	"${TARGET_DIR}/usr/sbin/netbee-status" \
+	"${TARGET_DIR}/usr/sbin/netbee-packet-steering" \
 	"${TARGET_DIR}/usr/sbin/netbee-sqm" \
 	"${TARGET_DIR}/usr/sbin/netbee-hotplug-wan" \
 	"${TARGET_DIR}/usr/sbin/netbee-backup" \

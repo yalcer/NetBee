@@ -19,10 +19,6 @@ start() {
 			return 0
 		fi
 	fi
-	if [ "$WAN_MODE" = "pppoe" ] || [ "$WAN_MODE" = "ont_vlan" ]; then
-		echo "SKIP (WAN mode is $WAN_MODE)"
-		return 0
-	fi
 	if [ ! -d "/sys/class/net/$LAN_IF" ] || [ ! -d "/sys/class/net/$WAN_IF" ]; then
 		echo "SKIP (waiting for $LAN_IF+$WAN_IF)"
 		return 0
@@ -33,7 +29,7 @@ start() {
 	fi
 	/usr/sbin/nft -f - <<EOF
 add flowtable inet netbee_fw fastpath { hook ingress priority 0; devices = { $LAN_IF, $WAN_IF }; }
-insert rule inet netbee_fw forward ip protocol { tcp, udp } ct state established flow add @fastpath
+insert rule inet netbee_fw forward meta l4proto { tcp, udp } ct state established flow add @fastpath
 EOF
 	status=$?
 	if [ "$status" -eq 0 ]; then
