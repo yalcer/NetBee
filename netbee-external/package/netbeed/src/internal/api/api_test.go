@@ -798,4 +798,270 @@ func TestApplianceHardeningRejectSyntaxVirtualEthtoolAndRollbackIsolation(t *tes
 	if rec.Code != http.StatusNotFound || !srv.Rollback.Status().Active || len(srv.Store.Get().Firewall.CustomRules) != 1 {
 		t.Fatalf("404 delete unexpectedly affected rollback or rules: code=%d active=%v", rec.Code, srv.Rollback.Status().Active)
 	}
+
+	// EffectiveSQMInterface auto-maps between eth1 (DHCP) and ppp0 (PPPoE / ONT VLAN)
+	if got := EffectiveSQMInterface("eth1", config.WANState{Mode: "ont_vlan", Interface: "eth1", VLANID: 35}); got != "ppp0" {
+		t.Fatalf("expected EffectiveSQMInterface to map eth1 -> ppp0 in ont_vlan mode, got %q", got)
+	}
+	if got := EffectiveSQMInterface("ppp0", config.WANState{Mode: "dhcp", Interface: "eth1"}); got != "eth1" {
+		t.Fatalf("expected EffectiveSQMInterface to map ppp0 -> eth1 in dhcp mode, got %q", got)
+	}
+
+	// RenderPPPoEPeer includes fast LCP echo (5s x 3 + lcp-echo-adaptive) and header compression disables
+	pppConf := RenderPPPoEPeer(config.WANState{Mode: "ont_vlan", Interface: "eth1", VLANID: 35, PPPoEUser: "u@isp", MTU: 1492})
+	for _, want := range []string{"plugin rp-pppoe.so eth1.35", "noaccomp", "nopcomp", "lcp-echo-interval 5", "lcp-echo-adaptive"} {
+		if !strings.Contains(pppConf, want) {
+			t.Fatalf("RenderPPPoEPeer missing %q in:\n%s", want, pppConf)
+		}
+	}
+
+	// RenderRouterSysctlConf preserves fq_codel default qdisc, backlog, conntrack timeouts, and kernel.panic
+	sysConf := RenderRouterSysctlConf(RouterSysctlConfig{
+		ConntrackMax: 131072, TCPSynCookies: true, RPFilter: 1, IgnoreBroadcast: true, IPv4Forwarding: true, IPv6Forwarding: true,
+	})
+	for _, want := range []string{
+		"kernel.panic = 3",
+		"net.core.default_qdisc = fq_codel",
+		"net.core.netdev_max_backlog = 4096",
+		"net.netfilter.nf_conntrack_tcp_timeout_established = 7440",
+	} {
+		if !strings.Contains(sysConf, want) {
+			t.Fatalf("RenderRouterSysctlConf missing %q in:\n%s", want, sysConf)
+		}
+	}
+}
+
+func TestDynamicInterfacesRoleSwapOrthogonalVLANAndStaticWAN(t *testing.T) {
+	srv, _ := newTestServer(t, "")
+	h := srv.Handler()
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", bytes.NewBufferString(`{"username":"admin","password":"netbee"}`)))
+	var lr struct{ Token string }
+	_ = json.Unmarshal(rec.Body.Bytes(), &lr)
+	authHdr := "Bearer " + lr.Token
+
+	// 1. Orthogonal 802.1Q VLAN + DHCP (IPoE) + custom WAN DNS (peerdns=false) + LAN Jumbo MTU 9000
+	peerDNSFalse := false
+	lanJumbo := config.LANState{Interface: "eth1", IP: "192.168.10.1", Netmask: "255.255.255.0", MTU: 9000, PinMAC: "00:E0:4C:68:02:5D"}
+	wanVlanDHCP := config.WANState{
+		Mode: "dhcp", Interface: "eth0", VLANEnabled: true, VLANID: 35,
+		PeerDNS: &peerDNSFalse, DNSServers: []string{"1.1.1.1", "9.9.9.9"},
+		PinMAC: "2C:CF:67:F0:F4:21", MTU: 1500, IPv6PD: true,
+	}
+	ifFile := RenderInterfacesFile(lanJumbo, wanVlanDHCP)
+	for _, want := range []string{
+		"iface eth1 inet static",
+		"up ip link set dev eth1 mtu 9000",
+		"up ip link add link eth0 name eth0.35 type vlan id 35",
+	} {
+		if !strings.Contains(ifFile, want) {
+			t.Fatalf("RenderInterfacesFile (VLAN DHCP + LAN Jumbo) missing %q in:\n%s", want, ifFile)
+		}
+	}
+	dhcpConf := RenderDHCPCDConf(lanJumbo, wanVlanDHCP)
+	for _, want := range []string{"denyinterfaces eth1 eth0", "nohook resolv.conf", "interface eth0.35", "ia_pd 2 eth1/0"} {
+		if !strings.Contains(dhcpConf, want) {
+			t.Fatalf("RenderDHCPCDConf (VLAN DHCP + peerdns=false) missing %q in:\n%s", want, dhcpConf)
+		}
+	}
+	udevRules := RenderNetUdevRules(lanJumbo, wanVlanDHCP)
+	if !strings.Contains(udevRules, `ATTR{address}=="00:e0:4c:68:02:5d", NAME="eth1"`) ||
+		!strings.Contains(udevRules, `ATTR{address}=="2c:cf:67:f0:f4:21", NAME="eth0"`) {
+		t.Fatalf("unexpected RenderNetUdevRules:\n%s", udevRules)
+	}
+	if got := EffectiveSQMInterface("", wanVlanDHCP); got != "eth0.35" {
+		t.Fatalf("expected EffectiveSQMInterface to target eth0.35 for VLAN DHCP WAN, got %q", got)
+	}
+
+	// 2. Orthogonal 802.1Q VLAN + Static IPv4 WAN + RFC 4638 Baby Jumbo 1500 PPPoE check
+	wanStaticVLAN := config.WANState{
+		Mode: "static", Interface: "eth1", VLANEnabled: true, VLANID: 100,
+		StaticIP: "198.51.100.10", StaticNetmask: "255.255.255.0", StaticGateway: "198.51.100.1", MTU: 1500,
+	}
+	staticIf := RenderInterfacesFile(config.DefaultState().LAN, wanStaticVLAN)
+	for _, want := range []string{
+		"up ip link add link eth1 name eth1.100 type vlan id 100",
+		"up ip addr add 198.51.100.10/24 dev eth1.100",
+		"up ip route replace default via 198.51.100.1 dev eth1.100",
+	} {
+		if !strings.Contains(staticIf, want) {
+			t.Fatalf("RenderInterfacesFile (VLAN Static WAN) missing %q in:\n%s", want, staticIf)
+		}
+	}
+	babyJumboIf := RenderInterfacesFile(config.DefaultState().LAN, config.WANState{
+		Mode: "ont_vlan", Interface: "eth1", VLANID: 35, PPPoEUser: "u@isp", PPPoEPassword: "p", MTU: 1500,
+	})
+	if !strings.Contains(babyJumboIf, "mtu 1508") {
+		t.Fatalf("expected RFC 4638 carrier mtu 1508 for 1500 PPPoE MTU, got:\n%s", babyJumboIf)
+	}
+
+	// 3. Interface label persistence & active-LAN link-down lockout guard
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/network/interfaces/eth1/label", bytes.NewBufferString(`{"label":"TurkNet 2.5G ONT"}`))
+	req.Header.Set("Authorization", authHdr)
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || srv.Store.Get().InterfaceLabels["eth1"] != "TurkNet 2.5G ONT" {
+		t.Fatalf("PUT /network/interfaces/eth1/label failed: %d %s", rec.Code, rec.Body.String())
+	}
+
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/network/interfaces/eth0/state", bytes.NewBufferString(`{"up":false}`))
+	req.Header.Set("Authorization", authHdr)
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 lockout guard when bringing down active LAN eth0, got %d", rec.Code)
+	}
+
+	// 4. Atomic LAN <-> WAN role swap endpoint (eth0 <-> eth1) with rollback safety & disk output verification
+	tmpEtc := t.TempDir()
+	origVars, origEnv, origIfs, origDhcp := nftVarsPath, netifEnvPath, interfacesConfPath, dhcpcdConfPath
+	origDrop, origHosts, origUINft, origSqm, origUdev := dropbearDefaultPath, hostsConfPath, uiNftDropInPath, sqmConfPath, customUdevNetRules
+	nftVarsPath = filepath.Join(tmpEtc, "nftables.vars")
+	netifEnvPath = filepath.Join(tmpEtc, "netif.env")
+	interfacesConfPath = filepath.Join(tmpEtc, "interfaces")
+	dhcpcdConfPath = filepath.Join(tmpEtc, "dhcpcd.conf")
+	dropbearDefaultPath = filepath.Join(tmpEtc, "dropbear")
+	hostsConfPath = filepath.Join(tmpEtc, "hosts")
+	uiNftDropInPath = filepath.Join(tmpEtc, "10-ui-rules.nft")
+	sqmConfPath = filepath.Join(tmpEtc, "sqm.conf")
+	customUdevNetRules = filepath.Join(tmpEtc, "11-netbee-custom-net.rules")
+	defer func() {
+		nftVarsPath, netifEnvPath, interfacesConfPath, dhcpcdConfPath = origVars, origEnv, origIfs, origDhcp
+		dropbearDefaultPath, hostsConfPath, uiNftDropInPath, sqmConfPath, customUdevNetRules = origDrop, origHosts, origUINft, origSqm, origUdev
+	}()
+
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/network/swap", bytes.NewBufferString(`{}`))
+	req.Header.Set("Authorization", authHdr)
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST /api/v1/network/swap failed: %d %s", rec.Code, rec.Body.String())
+	}
+	defer srv.Rollback.Confirm()
+	swapped := srv.Store.Get()
+	if swapped.LAN.Interface != "eth1" || swapped.WAN.Interface != "eth0" || !srv.Rollback.Status().Active {
+		t.Fatalf("unexpected state after role swap: lan=%s wan=%s active=%v",
+			swapped.LAN.Interface, swapped.WAN.Interface, srv.Rollback.Status().Active)
+	}
+	varsData, _ := os.ReadFile(nftVarsPath)
+	dhcpData, _ := os.ReadFile(dhcpcdConfPath)
+	if !strings.Contains(string(varsData), `define LAN_IF = "eth1"`) || !strings.Contains(string(dhcpData), "denyinterfaces eth1") {
+		t.Fatalf("swapped disk configs did not update LAN_IF/denyinterfaces to eth1:\nvars=%s\ndhcpcd=%s", string(varsData), string(dhcpData))
+	}
+}
+
+func TestFirewallMultiMemberSetsAndCSPHeader(t *testing.T) {
+	srv, _ := newTestServer(t, "")
+	h := srv.Handler()
+
+	// 1. Verify strict Content-Security-Policy header on responses
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/health", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	csp := rec.Header().Get("Content-Security-Policy")
+	if !strings.Contains(csp, "default-src 'self'") || !strings.Contains(csp, "script-src 'self'") || !strings.Contains(csp, "object-src 'none'") {
+		t.Fatalf("expected hardened Content-Security-Policy header, got %q", csp)
+	}
+
+	// 2. Validate multi-member anonymous set firewall rule & reject mixed IPv4/IPv6 families
+	validRule := config.FirewallRule{
+		ID:       "r_multi_alias",
+		Name:     "Block private subnets to web ports",
+		Enabled:  true,
+		Chain:    "forward",
+		Action:   "drop",
+		Protocol: "tcp",
+		InIface:  "eth0",
+		OutIface: "eth1",
+		SrcAddr:  "192.168.10.0/24, 10.0.0.0/8, 172.16.0.0/12",
+		DstPort:  "80, 443, 8000-8080",
+	}
+	if err := validateFirewallRule(validRule); err != nil {
+		t.Fatalf("expected multi-member firewall rule to validate cleanly, got %v", err)
+	}
+
+	mixedRule := validRule
+	mixedRule.SrcAddr = "192.168.10.0/24, 2001:db8::/32"
+	if err := validateFirewallRule(mixedRule); err == nil {
+		t.Fatalf("expected mixed IPv4/IPv6 src_addr set to be rejected")
+	}
+
+	rendered := RenderCustomNFT(config.FirewallState{CustomRules: []config.FirewallRule{validRule}}, "192.168.10.1")
+	expected := `add rule inet netbee_fw custom_forward iifname "eth0" oifname "eth1" ip saddr { 192.168.10.0/24, 10.0.0.0/8, 172.16.0.0/12 } tcp dport { 80, 443, 8000-8080 } drop`
+	if !strings.Contains(rendered, expected) {
+		t.Fatalf("expected rendered nftables anonymous set:\nwant: %s\ngot:\n%s", expected, rendered)
+	}
+}
+
+func TestAdGuardV1BlockedServicesAndTLSReset(t *testing.T) {
+	var lastMethod, lastPath string
+	var lastBody map[string]any
+	mockAGH := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		lastMethod = r.Method
+		lastPath = r.URL.Path
+		lastBody = nil
+		_ = json.NewDecoder(r.Body).Decode(&lastBody)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer mockAGH.Close()
+
+	srv, _ := newTestServer(t, mockAGH.URL)
+	defer srv.Close()
+	h := srv.Handler()
+
+	loginReq := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", strings.NewReader(`{"username":"admin","password":"netbee"}`))
+	loginReq.Header.Set("Content-Type", "application/json")
+	loginRec := httptest.NewRecorder()
+	h.ServeHTTP(loginRec, loginReq)
+	var loginBody struct {
+		Token string `json:"token"`
+	}
+	if err := json.Unmarshal(loginRec.Body.Bytes(), &loginBody); err != nil || loginBody.Token == "" {
+		t.Fatalf("login failed: %d %s", loginRec.Code, loginRec.Body.String())
+	}
+	authHeader := "Bearer " + loginBody.Token
+
+	// 1. Bare array to PUT /api/v1/dns/blocked-services must normalize to PUT /control/blocked_services/update with {ids, schedule}
+	req1 := httptest.NewRequest(http.MethodPut, "/api/v1/dns/blocked-services", strings.NewReader(`["youtube","tiktok"]`))
+	req1.Header.Set("Authorization", authHeader)
+	req1.Header.Set("Content-Type", "application/json")
+	rec1 := httptest.NewRecorder()
+	h.ServeHTTP(rec1, req1)
+	if rec1.Code != http.StatusOK || lastMethod != http.MethodPut || lastPath != "/control/blocked_services/update" {
+		t.Fatalf("expected PUT /control/blocked_services/update (200), got code=%d method=%s path=%s", rec1.Code, lastMethod, lastPath)
+	}
+	idsSlice, _ := lastBody["ids"].([]any)
+	schedMap, _ := lastBody["schedule"].(map[string]any)
+	if len(idsSlice) != 2 || schedMap == nil || schedMap["time_zone"] != "Local" {
+		t.Fatalf("unexpected normalized blocked_services payload: %+v", lastBody)
+	}
+
+	// 2. POST /api/v1/dns/filtering/config forwards to POST /control/filtering/config
+	req2 := httptest.NewRequest(http.MethodPost, "/api/v1/dns/filtering/config", strings.NewReader(`{"enabled":true,"interval":24}`))
+	req2.Header.Set("Authorization", authHeader)
+	req2.Header.Set("Content-Type", "application/json")
+	rec2 := httptest.NewRecorder()
+	h.ServeHTTP(rec2, req2)
+	if rec2.Code != http.StatusOK || lastMethod != http.MethodPost || lastPath != "/control/filtering/config" {
+		t.Fatalf("expected POST /control/filtering/config (200), got code=%d method=%s path=%s", rec2.Code, lastMethod, lastPath)
+	}
+
+	// 3. DELETE /api/v1/system/tls regenerates self-signed ECDSA cert immediately so GET /api/v1/system/tls reports auto_self_signed=true
+	delReq := httptest.NewRequest(http.MethodDelete, "/api/v1/system/tls", nil)
+	delReq.Header.Set("Authorization", authHeader)
+	delRec := httptest.NewRecorder()
+	h.ServeHTTP(delRec, delReq)
+	if delRec.Code != http.StatusOK {
+		t.Fatalf("expected DELETE /api/v1/system/tls 200, got %d: %s", delRec.Code, delRec.Body.String())
+	}
+
+	getReq := httptest.NewRequest(http.MethodGet, "/api/v1/system/tls", nil)
+	getReq.Header.Set("Authorization", authHeader)
+	getRec := httptest.NewRecorder()
+	h.ServeHTTP(getRec, getReq)
+	if getRec.Code != http.StatusOK || !strings.Contains(getRec.Body.String(), `"present":true`) || !strings.Contains(getRec.Body.String(), `"auto_self_signed":true`) {
+		t.Fatalf("expected regenerated auto_self_signed TLS cert, got %d: %s", getRec.Code, getRec.Body.String())
+	}
 }

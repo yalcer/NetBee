@@ -12,7 +12,7 @@ import (
 	"github.com/yalcer/netbee/netbeed/internal/sys"
 )
 
-const sqmConfPath = "/etc/netbee/sqm.conf"
+var sqmConfPath = "/etc/netbee/sqm.conf"
 
 type SQMConfig struct {
 	Enabled      bool   `json:"enabled"`
@@ -74,9 +74,36 @@ func RenderSQMConf(cfg SQMConfig) string {
 	)
 }
 
+// EffectiveSQMInterface maps SQM shaping automatically to "ppp0" in PPPoE/ONT-VLAN WAN modes,
+// to "<wan>.<vid>" in VLAN DHCP/Static modes, and to the physical WAN NIC otherwise.
+func EffectiveSQMInterface(configured string, wan config.WANState) string {
+	phys := wan.Interface
+	if phys == "" || !sys.ValidIface(phys) {
+		phys = "eth1"
+	}
+	logDev := wanLogicalDev(wan)
+	if wanUsesPPPoE(wan) {
+		if configured == "" || configured == "auto" || configured == phys || configured == logDev {
+			return "ppp0"
+		}
+		return configured
+	}
+	if wanUsesVLAN(wan) {
+		if configured == "" || configured == "auto" || configured == phys || configured == "ppp0" {
+			return logDev
+		}
+		return configured
+	}
+	if configured == "" || configured == "auto" || configured == "ppp0" || strings.HasPrefix(configured, phys+".") {
+		return phys
+	}
+	return configured
+}
+
 func (s *Server) handleGetSQM(w http.ResponseWriter, r *http.Request) {
 	data, _ := os.ReadFile(sqmConfPath)
 	cfg := ParseSQMConf(string(data))
+	cfg.WANInterface = EffectiveSQMInterface(cfg.WANInterface, s.Store.Get().WAN)
 	statusRes, _ := sys.Run(3*time.Second, "/usr/sbin/netbee-sqm", "status")
 	writeJSON(w, http.StatusOK, map[string]any{
 		"config": cfg,
@@ -90,9 +117,7 @@ func (s *Server) handleSetSQM(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid json body")
 		return
 	}
-	if req.WANInterface == "" {
-		req.WANInterface = "eth1"
-	}
+	req.WANInterface = EffectiveSQMInterface(req.WANInterface, s.Store.Get().WAN)
 	if !sys.ValidIface(req.WANInterface) {
 		writeErr(w, http.StatusBadRequest, "invalid wan_interface")
 		return

@@ -123,20 +123,29 @@ type CronJob struct {
 }
 
 type WANState struct {
-	Mode          string `json:"mode"` // "dhcp", "pppoe", "ont_vlan"
-	Interface     string `json:"interface"`
-	VLANID        int    `json:"vlan_id"`
-	PPPoEUser     string `json:"pppoe_user"`
-	PPPoEPassword string `json:"pppoe_password,omitempty"`
-	MACClone      string `json:"mac_clone,omitempty"`
-	MTU           int    `json:"mtu"`
-	IPv6PD        bool   `json:"ipv6_pd"`
+	Mode          string   `json:"mode"` // "dhcp", "static", "pppoe", "ont_vlan"
+	Interface     string   `json:"interface"`
+	VLANEnabled   bool     `json:"vlan_enabled,omitempty"`
+	VLANID        int      `json:"vlan_id"`
+	StaticIP      string   `json:"static_ip,omitempty"`
+	StaticNetmask string   `json:"static_netmask,omitempty"`
+	StaticGateway string   `json:"static_gateway,omitempty"`
+	PPPoEUser     string   `json:"pppoe_user"`
+	PPPoEPassword string   `json:"pppoe_password,omitempty"`
+	PeerDNS       *bool    `json:"peerdns,omitempty"`
+	DNSServers    []string `json:"dns_servers,omitempty"`
+	MACClone      string   `json:"mac_clone,omitempty"`
+	PinMAC        string   `json:"pin_mac,omitempty"`
+	MTU           int      `json:"mtu"`
+	IPv6PD        bool     `json:"ipv6_pd"`
 }
 
 type LANState struct {
 	Interface string `json:"interface"`
 	IP        string `json:"ip"`
 	Netmask   string `json:"netmask"`
+	MTU       int    `json:"mtu,omitempty"`
+	PinMAC    string `json:"pin_mac,omitempty"`
 }
 
 type WireGuardPeer struct {
@@ -162,13 +171,14 @@ type WireGuardState struct {
 }
 
 type State struct {
-	WAN          WANState                 `json:"wan"`
-	LAN          LANState                 `json:"lan"`
-	StaticRoutes []StaticRoute            `json:"static_routes"`
-	Ethtool      map[string]EthtoolConfig `json:"ethtool"`
-	CronJobs     []CronJob                `json:"cron_jobs"`
-	Firewall     FirewallState            `json:"firewall"`
-	WireGuard    WireGuardState           `json:"wireguard"`
+	WAN             WANState                 `json:"wan"`
+	LAN             LANState                 `json:"lan"`
+	InterfaceLabels map[string]string        `json:"interface_labels,omitempty"`
+	StaticRoutes    []StaticRoute            `json:"static_routes"`
+	Ethtool         map[string]EthtoolConfig `json:"ethtool"`
+	CronJobs        []CronJob                `json:"cron_jobs"`
+	Firewall        FirewallState            `json:"firewall"`
+	WireGuard       WireGuardState           `json:"wireguard"`
 }
 
 func DefaultState() State {
@@ -184,8 +194,10 @@ func DefaultState() State {
 			Interface: "eth0",
 			IP:        "192.168.10.1",
 			Netmask:   "255.255.255.0",
+			MTU:       1500,
 		},
-		StaticRoutes: []StaticRoute{},
+		InterfaceLabels: map[string]string{},
+		StaticRoutes:    []StaticRoute{},
 		Ethtool:      map[string]EthtoolConfig{},
 		CronJobs:     []CronJob{},
 		Firewall: FirewallState{
@@ -214,11 +226,14 @@ func normalizeState(st *State) {
 	if st.WAN.Mode == "" {
 		st.WAN.Mode = "dhcp"
 	}
+	if st.WAN.Mode == "ont_vlan" {
+		st.WAN.VLANEnabled = true
+	}
 	if st.WAN.MTU == 0 {
-		if st.WAN.Mode == "dhcp" {
-			st.WAN.MTU = 1500
-		} else {
+		if st.WAN.Mode == "pppoe" || st.WAN.Mode == "ont_vlan" {
 			st.WAN.MTU = 1492
+		} else {
+			st.WAN.MTU = 1500
 		}
 	}
 	if st.LAN.Interface == "" {
@@ -229,6 +244,12 @@ func normalizeState(st *State) {
 	}
 	if st.LAN.Netmask == "" {
 		st.LAN.Netmask = "255.255.255.0"
+	}
+	if st.LAN.MTU == 0 {
+		st.LAN.MTU = 1500
+	}
+	if st.InterfaceLabels == nil {
+		st.InterfaceLabels = map[string]string{}
 	}
 	if st.StaticRoutes == nil {
 		st.StaticRoutes = []StaticRoute{}
@@ -296,10 +317,24 @@ func cloneEthtoolMap(src map[string]EthtoolConfig) map[string]EthtoolConfig {
 	return out
 }
 
+func cloneStringMap(src map[string]string) map[string]string {
+	out := make(map[string]string, len(src))
+	for k, v := range src {
+		out[k] = v
+	}
+	return out
+}
+
 func (s *Store) Get() State {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	cp := s.state
+	cp.WAN.DNSServers = append([]string{}, s.state.WAN.DNSServers...)
+	if s.state.WAN.PeerDNS != nil {
+		pd := *s.state.WAN.PeerDNS
+		cp.WAN.PeerDNS = &pd
+	}
+	cp.InterfaceLabels = cloneStringMap(s.state.InterfaceLabels)
 	cp.StaticRoutes = append([]StaticRoute{}, s.state.StaticRoutes...)
 	cp.Ethtool = cloneEthtoolMap(s.state.Ethtool)
 	cp.CronJobs = append([]CronJob{}, s.state.CronJobs...)
@@ -313,6 +348,12 @@ func (s *Store) Update(fn func(*State) error) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	next := s.state
+	next.WAN.DNSServers = append([]string{}, s.state.WAN.DNSServers...)
+	if s.state.WAN.PeerDNS != nil {
+		pd := *s.state.WAN.PeerDNS
+		next.WAN.PeerDNS = &pd
+	}
+	next.InterfaceLabels = cloneStringMap(s.state.InterfaceLabels)
 	next.StaticRoutes = append([]StaticRoute{}, s.state.StaticRoutes...)
 	next.Ethtool = cloneEthtoolMap(s.state.Ethtool)
 	next.CronJobs = append([]CronJob{}, s.state.CronJobs...)

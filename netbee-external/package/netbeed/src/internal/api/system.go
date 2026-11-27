@@ -4,13 +4,19 @@ import (
 	"archive/tar"
 	"bytes"
 	"compress/gzip"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/pem"
 	"errors"
 	"fmt"
 	"io"
 	"io/fs"
+	"math/big"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -521,21 +527,33 @@ func RenderRouterSysctlConf(c RouterSysctlConfig) string {
 	}
 	return fmt.Sprintf(
 		"# Managed by NetBee OS (netbeed) - Router & Firewall Kernel Parameters\n"+
+			"kernel.panic = 3\n"+
+			"net.core.bpf_jit_enable = 1\n"+
+			"net.core.default_qdisc = fq_codel\n"+
+			"net.core.netdev_max_backlog = 4096\n"+
 			"net.ipv4.ip_forward = %d\n"+
 			"net.ipv6.conf.all.forwarding = %d\n"+
+			"net.ipv6.conf.default.forwarding = %d\n"+
 			"net.ipv4.conf.all.rp_filter = %d\n"+
 			"net.ipv4.conf.default.rp_filter = %d\n"+
 			"net.ipv4.tcp_syncookies = %d\n"+
+			"net.ipv4.tcp_fin_timeout = 30\n"+
+			"net.ipv4.tcp_keepalive_time = 120\n"+
 			"net.ipv4.conf.all.accept_redirects = 0\n"+
 			"net.ipv4.conf.default.accept_redirects = 0\n"+
 			"net.ipv4.conf.all.send_redirects = 0\n"+
 			"net.ipv4.conf.all.accept_source_route = 0\n"+
 			"net.ipv6.conf.all.accept_redirects = 0\n"+
 			"net.ipv4.icmp_echo_ignore_broadcasts = %d\n"+
+			"net.ipv4.icmp_ignore_bogus_error_responses = 1\n"+
 			"net.netfilter.nf_conntrack_max = %d\n"+
+			"net.netfilter.nf_conntrack_acct = 1\n"+
+			"net.netfilter.nf_conntrack_tcp_timeout_established = 7440\n"+
+			"net.netfilter.nf_conntrack_udp_timeout = 60\n"+
+			"net.netfilter.nf_conntrack_udp_timeout_stream = 180\n"+
 			"net.core.rmem_max = 16777216\n"+
 			"net.core.wmem_max = 16777216\n",
-		b2i(c.IPv4Forwarding), b2i(c.IPv6Forwarding), c.RPFilter, c.RPFilter,
+		b2i(c.IPv4Forwarding), b2i(c.IPv6Forwarding), b2i(c.IPv6Forwarding), c.RPFilter, c.RPFilter,
 		b2i(c.TCPSynCookies), b2i(c.IgnoreBroadcast), c.ConntrackMax,
 	)
 }
@@ -650,12 +668,88 @@ func (s *Server) handleSetTLS(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "reloading": req.Reload})
 }
 
+// GenerateSelfSignedTLS generates and atomically writes NetBee OS's ECDSA P-256 self-signed TLS certificate.
+func GenerateSelfSignedTLS(tlsDir, lanIP string) (string, string, error) {
+	if err := os.MkdirAll(tlsDir, 0700); err != nil {
+		return "", "", err
+	}
+	certPath := filepath.Join(tlsDir, "server.crt")
+	keyPath := filepath.Join(tlsDir, "server.key")
+
+	parsedLAN := net.ParseIP(lanIP)
+	if parsedLAN == nil {
+		parsedLAN = net.ParseIP("192.168.10.1")
+	}
+	ips := []net.IP{net.ParseIP("127.0.0.1"), net.ParseIP("::1"), parsedLAN}
+
+	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return "", "", err
+	}
+	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
+	if err != nil {
+		return "", "", err
+	}
+	now := time.Now()
+	notBefore := time.Date(1970, 1, 1, 0, 0, 0, 0, time.UTC)
+	notAfter := now.AddDate(10, 0, 0)
+	if notAfter.Year() < 2040 {
+		notAfter = time.Date(2040, 1, 1, 0, 0, 0, 0, time.UTC)
+	}
+
+	tpl := x509.Certificate{
+		SerialNumber: serial,
+		Subject: pkix.Name{
+			CommonName:   "netbee.lan",
+			Organization: []string{"NetBee OS"},
+		},
+		NotBefore:             notBefore,
+		NotAfter:              notAfter,
+		KeyUsage:              x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		BasicConstraintsValid: true,
+		DNSNames:              []string{"netbee", "netbee.lan", "localhost"},
+		IPAddresses:           ips,
+	}
+
+	derBytes, err := x509.CreateCertificate(rand.Reader, &tpl, &tpl, &priv.PublicKey, priv)
+	if err != nil {
+		return "", "", err
+	}
+	keyBytes, err := x509.MarshalECPrivateKey(priv)
+	if err != nil {
+		return "", "", err
+	}
+
+	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: derBytes})
+	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyBytes})
+
+	if err := config.AtomicWriteFile(certPath, certPEM, 0644); err != nil {
+		return "", "", err
+	}
+	if err := config.AtomicWriteFile(keyPath, keyPEM, 0600); err != nil {
+		return "", "", err
+	}
+	return certPath, keyPath, nil
+}
+
 func (s *Server) handleDeleteTLS(w http.ResponseWriter, r *http.Request) {
 	_ = os.Remove(filepath.Join(s.Cfg.TLSDIR, "server.crt"))
 	_ = os.Remove(filepath.Join(s.Cfg.TLSDIR, "server.key"))
+	if _, _, err := GenerateSelfSignedTLS(s.Cfg.TLSDIR, s.Store.Get().LAN.IP); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if _, err := os.Stat("/etc/init.d/S90netbeed"); err == nil {
+		go func() {
+			time.Sleep(400 * time.Millisecond)
+			_, _ = sys.Run(10*time.Second, "/etc/init.d/S90netbeed", "restart")
+		}()
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"ok":      true,
-		"message": "custom TLS certificate removed; restart netbeed to auto-generate a fresh self-signed certificate",
+		"ok":               true,
+		"auto_self_signed": true,
+		"message":          "reverted to NetBee OS automatic self-signed ECDSA certificate",
 	})
 }
 

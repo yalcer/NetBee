@@ -23,6 +23,11 @@ define NETBEED_INSTALL_TARGET_CMDS
 		$(TARGET_DIR)/usr/share/netbee/web/index.html
 	cp -a $(NETBEED_PKGDIR)/../../../hive/assets \
 		$(TARGET_DIR)/usr/share/netbee/web/assets
+	rm -rf $(TARGET_DIR)/usr/share/netbee/web/assets/css/showcase.css \
+		$(TARGET_DIR)/usr/share/netbee/web/assets/js/pages \
+		$(TARGET_DIR)/usr/share/netbee/web/assets/js/data/mock-db.js \
+		$(TARGET_DIR)/usr/share/netbee/web/assets/img/logo-mark.svg \
+		$(TARGET_DIR)/usr/share/netbee/web/assets/vendor/fomantic/themes/default/assets/fonts/brand-icons.*
 endef
 
 define NETBEED_INSTALL_INIT_SYSV

@@ -2,6 +2,7 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"crypto/hmac"
 	"encoding/json"
 	"errors"
@@ -98,8 +99,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/logs/rotate", s.requireAuth(s.handleLogsRotate))
 	mux.HandleFunc("POST /api/v1/logs/clear", s.requireAuth(s.handleLogsClear))
 
-	// Network: Interfaces, Ethtool, Persisted Static Routes, Neighbors, LAN & WAN (DHCP/PPPoE/ONT VLAN/IPv6-PD)
+	// Network: Interfaces, Link State/Labels, Ethtool, Static Routes, Neighbors, LAN, WAN & Atomic Role Swap
 	mux.HandleFunc("GET /api/v1/network/interfaces", s.requireAuth(s.handleInterfaces))
+	mux.HandleFunc("POST /api/v1/network/interfaces/{iface}/state", s.requireAuth(s.handleSetInterfaceState))
+	mux.HandleFunc("PUT /api/v1/network/interfaces/{iface}/label", s.requireAuth(s.handleSetInterfaceLabel))
 	mux.HandleFunc("GET /api/v1/network/ethtool/{iface}", s.requireAuth(s.handleGetEthtool))
 	mux.HandleFunc("PUT /api/v1/network/ethtool/{iface}", s.requireAuth(s.handleSetEthtool))
 	mux.HandleFunc("GET /api/v1/network/routes", s.requireAuth(s.handleRoutes))
@@ -112,6 +115,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/network/wan/reconnect", s.requireAuth(s.handleWANReconnect))
 	mux.HandleFunc("GET /api/v1/network/lan", s.requireAuth(s.handleGetLAN))
 	mux.HandleFunc("PUT /api/v1/network/lan", s.requireAuth(s.handleSetLAN))
+	mux.HandleFunc("POST /api/v1/network/swap", s.requireAuth(s.handleSwapNetworkRoles))
 
 	// Firewall (nftables), Rules/Port-Forwards CRUD, Raw Custom .nft, Flow Offload & Conntrack
 	mux.HandleFunc("GET /api/v1/firewall/ruleset", s.requireAuth(s.handleFirewallRuleset))
@@ -142,6 +146,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("PUT /api/v1/dns/filters", s.requireAuth(s.handleDNSFilterSet))
 	mux.HandleFunc("DELETE /api/v1/dns/filters", s.requireAuth(s.handleDNSFilterDel))
 	mux.HandleFunc("POST /api/v1/dns/filters/refresh", s.requireAuth(s.handleDNSFiltersRefresh))
+	mux.HandleFunc("POST /api/v1/dns/filtering/config", s.requireAuth(s.handleDNSFilteringConfig))
 	mux.HandleFunc("PUT /api/v1/dns/rules", s.requireAuth(s.handleDNSSetUserRules))
 	mux.HandleFunc("GET /api/v1/dns/blocked-services", s.requireAuth(s.handleDNSBlockedServicesGet))
 	mux.HandleFunc("GET /api/v1/dns/blocked-services/all", s.requireAuth(s.handleDNSBlockedServicesAll))
@@ -150,10 +155,12 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/dns/protection", s.requireAuth(s.handleDNSProtection))
 	mux.HandleFunc("GET /api/v1/dns/rewrites", s.requireAuth(s.handleDNSRewritesList))
 	mux.HandleFunc("POST /api/v1/dns/rewrites", s.requireAuth(s.handleDNSRewriteAdd))
+	mux.HandleFunc("PUT /api/v1/dns/rewrites", s.requireAuth(s.handleDNSRewriteUpdate))
 	mux.HandleFunc("DELETE /api/v1/dns/rewrites", s.requireAuth(s.handleDNSRewriteDel))
 	mux.HandleFunc("GET /api/v1/dhcp/status", s.requireAuth(s.handleDHCPStatus))
 	mux.HandleFunc("PUT /api/v1/dhcp/config", s.requireAuth(s.handleDHCPSetConfig))
 	mux.HandleFunc("POST /api/v1/dhcp/leases/static", s.requireAuth(s.handleDHCPStaticAdd))
+	mux.HandleFunc("PUT /api/v1/dhcp/leases/static", s.requireAuth(s.handleDHCPStaticUpdate))
 	mux.HandleFunc("DELETE /api/v1/dhcp/leases/static", s.requireAuth(s.handleDHCPStaticDel))
 	mux.HandleFunc("/api/v1/adguard/", s.requireAuth(s.handleAdGuardProxy))
 
@@ -206,6 +213,7 @@ func (s *Server) securityHeaders(next http.Handler) http.Handler {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("X-Frame-Options", "DENY")
 		w.Header().Set("Referrer-Policy", "same-origin")
+		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'")
 		next.ServeHTTP(w, r)
 	})
 }
@@ -274,6 +282,9 @@ func (s *Server) RestoreRuntimeOnBoot() {
 	if _, err := os.Stat(sysctlRouterConfPath); err == nil {
 		_, _ = sys.Run(5*time.Second, "/sbin/sysctl", "-p", sysctlRouterConfPath)
 	}
+	if _, err := os.Stat("/usr/sbin/netbee-packet-steering"); err == nil {
+		_, _ = sys.Run(5*time.Second, "/usr/sbin/netbee-packet-steering", "start")
+	}
 	st := s.Store.Get()
 	if _, err := os.Stat(nftVarsPath); err == nil {
 		_ = syncNetIfConfigs(st)
@@ -290,6 +301,81 @@ func (s *Server) RestoreRuntimeOnBoot() {
 		}
 	}
 	restorePersistedRoutes(st.StaticRoutes)
+}
+
+func readSysfsCarrier(iface string) (int, bool) {
+	if iface == "" || !sys.ValidIface(iface) {
+		return 0, false
+	}
+	b, err := os.ReadFile(filepath.Join("/sys/class/net", iface, "carrier"))
+	if err != nil {
+		return 0, false
+	}
+	if strings.TrimSpace(string(b)) == "1" {
+		return 1, true
+	}
+	return 0, true
+}
+
+// StartLinkMonitor watches physical LAN and WAN carrier transitions (0 -> 1) so unplug/replug
+// or downstream router / ONT reboots recover DHCP/PPPoE, IPv6 RA, and RPS immediately.
+func (s *Server) StartLinkMonitor(ctx context.Context) {
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
+	prev := make(map[string]int)
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			st := s.Store.Get()
+			lanIf := st.LAN.Interface
+			if lanIf == "" {
+				lanIf = "eth0"
+			}
+			wanIf := st.WAN.Interface
+			if wanIf == "" {
+				wanIf = "eth1"
+			}
+
+			if cur, ok := readSysfsCarrier(lanIf); ok {
+				old, seen := prev[lanIf]
+				prev[lanIf] = cur
+				if seen && old == 0 && cur == 1 {
+					log.Printf("link monitor: LAN (%s) carrier restored", lanIf)
+					if _, err := os.Stat("/usr/sbin/netbee-packet-steering"); err == nil {
+						_, _ = sys.Run(3*time.Second, "/usr/sbin/netbee-packet-steering", "start")
+					}
+					if _, err := os.Stat("/etc/radvd.conf"); err == nil {
+						if _, pErr := sys.Run(2*time.Second, "pidof", "radvd"); pErr == nil {
+							_, _ = sys.Run(5*time.Second, "/etc/init.d/S50radvd", "reload")
+						}
+					}
+				}
+			}
+
+			if cur, ok := readSysfsCarrier(wanIf); ok {
+				old, seen := prev[wanIf]
+				prev[wanIf] = cur
+				if seen && old == 0 && cur == 1 {
+					log.Printf("link monitor: WAN (%s) carrier restored", wanIf)
+					if _, err := os.Stat("/usr/sbin/netbee-packet-steering"); err == nil {
+						_, _ = sys.Run(3*time.Second, "/usr/sbin/netbee-packet-steering", "start")
+					}
+					if st.WAN.Mode == "dhcp" {
+						if _, pErr := sys.Run(2*time.Second, "pidof", "dhcpcd"); pErr == nil {
+							_, _ = sys.Run(5*time.Second, "dhcpcd", "-n", wanIf)
+						}
+					} else if st.WAN.Mode == "pppoe" || st.WAN.Mode == "ont_vlan" {
+						if _, pErr := sys.Run(2*time.Second, "pidof", "pppd"); pErr != nil {
+							_, _ = sys.Run(10*time.Second, "ifup", wanIf)
+						}
+					}
+				}
+			}
+		}
+	}
 }
 
 func (s *Server) requireAuth(next http.HandlerFunc) http.HandlerFunc {

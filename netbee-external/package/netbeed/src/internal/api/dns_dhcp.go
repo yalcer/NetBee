@@ -3,6 +3,7 @@ package api
 import (
 	"bytes"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -142,6 +143,10 @@ func (s *Server) handleDNSFiltersRefresh(w http.ResponseWriter, r *http.Request)
 	s.proxyAdGuard(w, http.MethodPost, "filtering/refresh", "", "application/json", bytes.NewReader(b))
 }
 
+func (s *Server) handleDNSFilteringConfig(w http.ResponseWriter, r *http.Request) {
+	s.proxyAdGuardJSONPost(w, r, "filtering/config")
+}
+
 func (s *Server) handleDNSSetUserRules(w http.ResponseWriter, r *http.Request) {
 	s.proxyAdGuardJSONPost(w, r, "filtering/set_rules")
 }
@@ -155,7 +160,53 @@ func (s *Server) handleDNSBlockedServicesAll(w http.ResponseWriter, r *http.Requ
 }
 
 func (s *Server) handleDNSBlockedServicesSet(w http.ResponseWriter, r *http.Request) {
-	s.proxyAdGuardJSONPost(w, r, "blocked_services/set")
+	b, err := readBoundedBody(r, 65536)
+	if err != nil {
+		if errors.Is(err, errPayloadTooLarge) {
+			writeErr(w, http.StatusRequestEntityTooLarge, err.Error())
+			return
+		}
+		writeErr(w, http.StatusBadRequest, "failed to read request body")
+		return
+	}
+	trimmed := bytes.TrimSpace(b)
+	if len(trimmed) == 0 {
+		writeErr(w, http.StatusBadRequest, "empty request body")
+		return
+	}
+
+	// AdGuardHome v0.107.36+ / v1.0.0 uses PUT /control/blocked_services/update
+	// with {"ids":[...], "schedule":{"time_zone":"Local"}} instead of legacy POST /blocked_services/set.
+	var normalized []byte
+	if trimmed[0] == '[' {
+		var ids []string
+		if err := json.Unmarshal(trimmed, &ids); err != nil {
+			writeErr(w, http.StatusBadRequest, "invalid blocked services array")
+			return
+		}
+		if ids == nil {
+			ids = []string{}
+		}
+		normalized, _ = json.Marshal(map[string]any{
+			"ids":      ids,
+			"schedule": map[string]any{"time_zone": "Local"},
+		})
+	} else {
+		var obj map[string]any
+		if err := json.Unmarshal(trimmed, &obj); err != nil {
+			writeErr(w, http.StatusBadRequest, "invalid json body")
+			return
+		}
+		if _, ok := obj["ids"]; !ok || obj["ids"] == nil {
+			obj["ids"] = []string{}
+		}
+		if _, ok := obj["schedule"]; !ok || obj["schedule"] == nil {
+			obj["schedule"] = map[string]any{"time_zone": "Local"}
+		}
+		normalized, _ = json.Marshal(obj)
+	}
+
+	s.proxyAdGuard(w, http.MethodPut, "blocked_services/update", "", "application/json", bytes.NewReader(normalized))
 }
 
 func (s *Server) handleDNSCacheClear(w http.ResponseWriter, r *http.Request) {
@@ -178,6 +229,19 @@ func (s *Server) handleDNSRewriteDel(w http.ResponseWriter, r *http.Request) {
 	s.proxyAdGuardJSONPost(w, r, "rewrite/delete")
 }
 
+func (s *Server) handleDNSRewriteUpdate(w http.ResponseWriter, r *http.Request) {
+	b, err := readBoundedBody(r, 65536)
+	if err != nil {
+		if errors.Is(err, errPayloadTooLarge) {
+			writeErr(w, http.StatusRequestEntityTooLarge, err.Error())
+			return
+		}
+		writeErr(w, http.StatusBadRequest, "failed to read request body")
+		return
+	}
+	s.proxyAdGuard(w, http.MethodPut, "rewrite/update", "", "application/json", bytes.NewReader(b))
+}
+
 func (s *Server) handleDHCPStatus(w http.ResponseWriter, r *http.Request) {
 	s.proxyAdGuard(w, http.MethodGet, "dhcp/status", "", "", nil)
 }
@@ -188,6 +252,10 @@ func (s *Server) handleDHCPSetConfig(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleDHCPStaticAdd(w http.ResponseWriter, r *http.Request) {
 	s.proxyAdGuardJSONPost(w, r, "dhcp/add_static_lease")
+}
+
+func (s *Server) handleDHCPStaticUpdate(w http.ResponseWriter, r *http.Request) {
+	s.proxyAdGuardJSONPost(w, r, "dhcp/update_static_lease")
 }
 
 func (s *Server) handleDHCPStaticDel(w http.ResponseWriter, r *http.Request) {

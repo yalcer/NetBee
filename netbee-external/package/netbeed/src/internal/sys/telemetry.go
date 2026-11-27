@@ -74,6 +74,7 @@ var ManagedServices = []ManagedServiceDef{
 	{"adguardhome", "AdGuardHome DNS & DHCP Server", "AdGuardHome", "/etc/init.d/S85adguardhome", true, []string{"start", "stop", "restart", "reload"}},
 	{"nftables", "Stateful Firewall & NAT", "", "/etc/init.d/S35nftables", true, []string{"start", "stop", "restart", "reload"}},
 	{"nft-offload", "Software Fastpath Flow Offload", "", "/etc/init.d/S42nft-offload", true, []string{"start", "stop", "restart", "reload"}},
+	{"packet-steering", "Multi-Core RPS/RFS Packet Steering", "", "/etc/init.d/S18packet-steering", true, []string{"start", "stop", "restart", "reload"}},
 	{"sqm", "SQM CAKE Anti-Bufferbloat QoS", "", "/etc/init.d/S45sqm", true, []string{"start", "stop", "restart", "reload"}},
 	{"dropbear", "Dropbear SSH Server", "dropbear", "/etc/init.d/S50dropbear", true, []string{"start", "stop", "restart", "reload"}},
 	{"chronyd", "Chrony NTP Client & LAN Time Server", "chronyd", "/etc/init.d/S49chronyd", false, []string{"start", "stop", "restart"}},
@@ -301,6 +302,12 @@ func ListServices() []ServiceStatus {
 		} else if svc.Name == "sqm" {
 			if res, err := Run(3*time.Second, "tc", "qdisc", "show"); err == nil && strings.Contains(res.Stdout, "qdisc cake") {
 				st.Running = true
+			}
+		} else if svc.Name == "packet-steering" {
+			if b, err := os.ReadFile("/proc/sys/net/core/rps_sock_flow_entries"); err == nil {
+				if v, err := strconv.Atoi(strings.TrimSpace(string(b))); err == nil && v > 0 {
+					st.Running = true
+				}
 			}
 		}
 		out = append(out, st)

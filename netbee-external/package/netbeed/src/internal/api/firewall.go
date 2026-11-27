@@ -12,7 +12,7 @@ import (
 	"github.com/yalcer/netbee/netbeed/internal/sys"
 )
 
-const (
+var (
 	uiNftDropInPath     = "/etc/nftables.d/10-ui-rules.nft"
 	customNftDropInPath = "/etc/nftables.d/00-custom.nft"
 )
@@ -25,6 +25,58 @@ func isIPv6Addr(s string) bool {
 		return ip.To4() == nil
 	}
 	return false
+}
+
+func parseFirewallAddrSpec(raw string) ([]string, bool, bool) {
+	parts := strings.Split(raw, ",")
+	var items []string
+	v4Count := 0
+	v6Count := 0
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		if !sys.ValidIPOrCIDR(p) {
+			return nil, false, false
+		}
+		if isIPv6Addr(p) {
+			v6Count++
+		} else {
+			v4Count++
+		}
+		items = append(items, p)
+	}
+	if len(items) == 0 || len(items) > 32 || (v4Count > 0 && v6Count > 0) {
+		return nil, false, false
+	}
+	return items, v6Count > 0, true
+}
+
+func parseFirewallPortSpec(raw string) ([]string, bool) {
+	parts := strings.Split(raw, ",")
+	var items []string
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		if !sys.ValidPortSpec(p) {
+			return nil, false
+		}
+		items = append(items, p)
+	}
+	if len(items) == 0 || len(items) > 32 {
+		return nil, false
+	}
+	return items, true
+}
+
+func formatNftSetOrSingle(items []string) string {
+	if len(items) == 1 {
+		return items[0]
+	}
+	return "{ " + strings.Join(items, ", ") + " }"
 }
 
 // RenderCustomNFT generates /etc/nftables.d/10-ui-rules.nft targeting custom_input and custom_forward
@@ -90,27 +142,33 @@ func RenderCustomNFT(fw config.FirewallState, lanIP string) string {
 		v4 := false
 		v6 := false
 		if rule.SrcAddr != "" {
-			if isIPv6Addr(rule.SrcAddr) {
-				v6 = true
-				parts = append(parts, fmt.Sprintf("ip6 saddr %s", rule.SrcAddr))
-			} else {
-				v4 = true
-				parts = append(parts, fmt.Sprintf("ip saddr %s", rule.SrcAddr))
+			if srcItems, isV6, ok := parseFirewallAddrSpec(rule.SrcAddr); ok {
+				if isV6 {
+					v6 = true
+					parts = append(parts, fmt.Sprintf("ip6 saddr %s", formatNftSetOrSingle(srcItems)))
+				} else {
+					v4 = true
+					parts = append(parts, fmt.Sprintf("ip saddr %s", formatNftSetOrSingle(srcItems)))
+				}
 			}
 		}
 		if rule.DstAddr != "" {
-			if isIPv6Addr(rule.DstAddr) {
-				v6 = true
-				parts = append(parts, fmt.Sprintf("ip6 daddr %s", rule.DstAddr))
-			} else {
-				v4 = true
-				parts = append(parts, fmt.Sprintf("ip daddr %s", rule.DstAddr))
+			if dstItems, isV6, ok := parseFirewallAddrSpec(rule.DstAddr); ok {
+				if isV6 {
+					v6 = true
+					parts = append(parts, fmt.Sprintf("ip6 daddr %s", formatNftSetOrSingle(dstItems)))
+				} else {
+					v4 = true
+					parts = append(parts, fmt.Sprintf("ip daddr %s", formatNftSetOrSingle(dstItems)))
+				}
 			}
 		}
 		switch rule.Protocol {
 		case "tcp", "udp":
 			if rule.DstPort != "" {
-				parts = append(parts, fmt.Sprintf("%s dport %s", rule.Protocol, rule.DstPort))
+				if portItems, ok := parseFirewallPortSpec(rule.DstPort); ok {
+					parts = append(parts, fmt.Sprintf("%s dport %s", rule.Protocol, formatNftSetOrSingle(portItems)))
+				}
 			} else {
 				parts = append(parts, fmt.Sprintf("meta l4proto %s", rule.Protocol))
 			}
@@ -170,23 +228,32 @@ func validateFirewallRule(r config.FirewallRule) error {
 	if r.OutIface != "" && !sys.ValidIface(r.OutIface) {
 		return fmt.Errorf("invalid out_iface")
 	}
-	if r.SrcAddr != "" && !sys.ValidIPOrCIDR(r.SrcAddr) {
-		return fmt.Errorf("invalid src_addr")
+	var srcV6, dstV6 bool
+	if r.SrcAddr != "" {
+		_, isV6, ok := parseFirewallAddrSpec(r.SrcAddr)
+		if !ok {
+			return fmt.Errorf("invalid src_addr")
+		}
+		srcV6 = isV6
 	}
-	if r.DstAddr != "" && !sys.ValidIPOrCIDR(r.DstAddr) {
-		return fmt.Errorf("invalid dst_addr")
+	if r.DstAddr != "" {
+		_, isV6, ok := parseFirewallAddrSpec(r.DstAddr)
+		if !ok {
+			return fmt.Errorf("invalid dst_addr")
+		}
+		dstV6 = isV6
 	}
-	if r.SrcAddr != "" && r.DstAddr != "" && isIPv6Addr(r.SrcAddr) != isIPv6Addr(r.DstAddr) {
+	if r.SrcAddr != "" && r.DstAddr != "" && srcV6 != dstV6 {
 		return fmt.Errorf("src_addr and dst_addr must use the same IP family")
 	}
-	if r.Protocol == "icmpv6" && ((r.SrcAddr != "" && !isIPv6Addr(r.SrcAddr)) || (r.DstAddr != "" && !isIPv6Addr(r.DstAddr))) {
+	if r.Protocol == "icmpv6" && ((r.SrcAddr != "" && !srcV6) || (r.DstAddr != "" && !dstV6)) {
 		return fmt.Errorf("icmpv6 protocol cannot be combined with IPv4 addresses")
 	}
 	if r.DstPort != "" {
 		if r.Protocol != "tcp" && r.Protocol != "udp" {
 			return fmt.Errorf("dst_port requires protocol tcp or udp")
 		}
-		if !sys.ValidPortSpec(r.DstPort) {
+		if _, ok := parseFirewallPortSpec(r.DstPort); !ok {
 			return fmt.Errorf("invalid dst_port")
 		}
 	}

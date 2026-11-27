@@ -59,17 +59,20 @@ Default credentials on first boot: **`admin` / `netbee`** (`must_change_password
 
 | Method | Endpoint | Description |
 | :--- | :--- | :--- |
-| `GET` | `/api/v1/network/interfaces` | `ip -j -s addr show` enriched with `ethtool` speed/duplex/link |
+| `GET` | `/api/v1/network/interfaces` | `ip -j -s addr show` enriched with `driver`, `role`, `custom_label`, and `ethtool` speed/duplex/link |
+| `POST` | `/api/v1/network/interfaces/{iface}/state` | Bring non-LAN interface `up` or `down` (`{"up":true\|false}`, active-LAN lockout protected) |
+| `PUT` | `/api/v1/network/interfaces/{iface}/label` | Persist custom human-readable interface label (`{"label":"..."}`) |
 | `GET` / `PUT` | `/api/v1/network/ethtool/{iface}` | Read/configure NIC link speed, duplex, autoneg, Wake-on-LAN (`wol`: `d`/`g`) & hardware offloads (`rx`, `tx`, `sg`, `tso`, `gso`, `gro`, `rxvlan`, `txvlan`) — persisted across reboots (60s rollback guard on manual LAN speed/duplex) |
 | `GET` | `/api/v1/network/routes` | Live IPv4 & IPv6 routing tables (`ip -j route`) + persisted `static_routes` |
 | `POST` | `/api/v1/network/routes` | Apply & persist static route: `{"destination":"10.20.0.0/24","gateway":"192.168.10.2","device":"eth0","metric":100}` |
 | `DELETE` | `/api/v1/network/routes` (`/{id}`) | Delete static route by `{id}` or `{"destination":"10.20.0.0/24"}` |
 | `GET` | `/api/v1/network/neighbors` | ARP / IPv6 NDP neighbor table (`ip -j neigh`) |
 | `GET` | `/api/v1/network/wan` | Current WAN config & `pppd_running` status |
-| `PUT` | `/api/v1/network/wan` | Configure `dhcp`, `pppoe`, or `ont_vlan` (`vlan_id`, `pppoe_user`, `pppoe_password`, `mac_clone`, `mtu`, `ipv6_pd`) — syncs PAP/CHAP, `nftables.vars`, `netif.env` + **60s rollback guard** |
-| `POST` | `/api/v1/network/wan/reconnect` | Reconnect PPPoE or renew DHCP |
-| `GET` | `/api/v1/network/lan` | Current LAN interface/IP/netmask |
-| `PUT` | `/api/v1/network/lan` | Update LAN IP/netmask — syncs `AdGuardHome.yaml`, Dropbear, `nftables.vars`, `hosts` & applies live with **60s rollback guard** |
+| `PUT` | `/api/v1/network/wan` | Dynamic physical NIC (`interface`), orthogonal `vlan_enabled` + `vlan_id`, `dhcp` / `static` (`static_ip`, `static_netmask`, `static_gateway`) / `pppoe` / `ont_vlan`, `peerdns` + `dns_servers`, `mac_clone`, `pin_mac`, `mtu` (`576..1508`), `ipv6_pd` + **60s rollback guard** |
+| `POST` | `/api/v1/network/wan/reconnect` | Reconnect PPPoE, reload Static WAN, or renew DHCP |
+| `GET` | `/api/v1/network/lan` | Current LAN interface/IP/netmask/MTU/MAC-pin |
+| `PUT` | `/api/v1/network/lan` | Dynamic LAN `interface`, `ip`, `netmask`, `mtu` (`576..9000`), `pin_mac` — syncs `AdGuardHome.yaml`, Dropbear, `nftables.vars`, `hosts` & applies live with **60s rollback guard** |
+| `POST` | `/api/v1/network/swap` | Atomically exchange or reassign LAN & WAN physical ports (`{}` or `{"lan":...,"wan":...}`) under **60s rollback guard** |
 
 ---
 
@@ -105,14 +108,15 @@ Default credentials on first boot: **`admin` / `netbee`** (`must_change_password
 | `GET` | `/api/v1/dns/querylog` | Recent DNS query log |
 | `GET` / `POST` / `PUT` / `DELETE` | `/api/v1/dns/filters` | List, add, enable/disable/rename, or remove blocklist URLs |
 | `POST` | `/api/v1/dns/filters/refresh` | Force refresh blocklists immediately |
+| `POST` | `/api/v1/dns/filtering/config` | Toggle AdGuardHome filtering engine & refresh interval (`{"enabled":true,"interval":24}`) |
 | `PUT` | `/api/v1/dns/rules` | Update custom user filtering rules (`{"rules":["||ads.example.com^"]}`) |
-| `GET` / `PUT` | `/api/v1/dns/blocked-services` (`/all`) | View/set one-click blocked services (YouTube, TikTok, Discord, etc.) |
+| `GET` / `PUT` | `/api/v1/dns/blocked-services` (`/all`) | View/update one-click blocked services (`{"ids":["youtube"],"schedule":{"time_zone":"Local"}}`) |
 | `POST` | `/api/v1/dns/cache/clear` | Clear DNS cache |
 | `POST` | `/api/v1/dns/protection` | Toggle DNS protection (`{"enabled":true}`) |
-| `GET` / `POST` / `DELETE` | `/api/v1/dns/rewrites` | Local DNS rewrite rules |
+| `GET` / `POST` / `PUT` / `DELETE` | `/api/v1/dns/rewrites` | Local DNS rewrite rules |
 | `GET` | `/api/v1/dhcp/status` | Active & static DHCP leases |
 | `PUT` | `/api/v1/dhcp/config` | Update DHCP pool/gateway/lease time |
-| `POST` / `DELETE` | `/api/v1/dhcp/leases/static` | Add/remove static MAC → IP reservation |
+| `POST` / `PUT` / `DELETE` | `/api/v1/dhcp/leases/static` | Add, update, or remove static MAC → IP reservation |
 | `ANY` | `/api/v1/adguard/{path...}` | Full authenticated proxy to `AdGuardHome /control/{path...}` |
 
 ---
