@@ -13,7 +13,7 @@
   var HOSTNAME_RE = /^(?=.{1,253}$)(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)*[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?$/;
   var WG_KEY_RE = /^[A-Za-z0-9+/]{43}=$/;
   var USERNAME_RE = /^[a-z][a-z0-9._-]{2,31}$/;
-  var SSH_PUBKEY_RE = /^(ssh-ed25519|ssh-rsa|ecdsa-sha2-nistp(?:256|384|521))\s+[A-Za-z0-9+/=]{24,}(?:\s+.*)?$/;
+  var SSH_PUBKEY_RE = /^(ssh-ed25519|ssh-rsa|ecdsa-sha2-nistp(?:256|384|521)|sk-ssh-ed25519@openssh\.com|sk-ecdsa-sha2-nistp256@openssh\.com)\s+[A-Za-z0-9+/=]{24,}(?:\s+.*)?$/;
   var ALIAS_NAME_RE = /^[A-Za-z][A-Za-z0-9_]{1,31}$/;
   var IFACE_NAME_RE = /^[a-z][a-z0-9._-]{1,14}$/;
   var DOMAIN_WILDCARD_RE = /^(\*\.)?(?=.{1,253}$)(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,63}$/;
@@ -56,6 +56,12 @@
     var groups = addr.split(':');
     if (groups.length !== 8) return false;
     return groups.every(function (h) { return HEXTET_RE.test(h); });
+  }
+
+  function isIP(value) {
+    var v = String(value || '').trim();
+    if (!v || v.indexOf('/') !== -1) return false;
+    return isIPv4(v) || isIPv6(v);
   }
 
   function isMAC(value) {
@@ -120,26 +126,77 @@
     return parts.every(function (p) { return isCIDR(p) || isIPv6(p); });
   }
 
+  function expandIPv6Hextets(addrStr) {
+    var v = String(addrStr || '').trim();
+    if (!v || v.indexOf('/') !== -1 || !isIPv6(v)) return null;
+    var doubleColon = v.split('::');
+    var groups;
+    if (doubleColon.length === 2) {
+      var left = doubleColon[0] ? doubleColon[0].split(':') : [];
+      var right = doubleColon[1] ? doubleColon[1].split(':') : [];
+      var missing = 8 - (left.length + right.length);
+      groups = left.slice();
+      for (var i = 0; i < missing; i++) groups.push('0');
+      groups = groups.concat(right);
+    } else {
+      groups = v.split(':');
+    }
+    if (groups.length !== 8) return null;
+    return groups.map(function (g) { return parseInt(g, 16) & 0xffff; });
+  }
+
+  function ipv6MatchesCidr(ip, cidrOrIp) {
+    var hostHextets = expandIPv6Hextets(ip);
+    if (!hostHextets) return false;
+    var target = String(cidrOrIp || '').trim();
+    if (!isIPv6(target)) return false;
+    var slashIdx = target.indexOf('/');
+    var netAddr = slashIdx === -1 ? target : target.slice(0, slashIdx);
+    var prefix = slashIdx === -1 ? 128 : Number(target.slice(slashIdx + 1));
+    var netHextets = expandIPv6Hextets(netAddr);
+    if (!netHextets) return false;
+
+    for (var i = 0; i < 8; i++) {
+      var bits = Math.min(16, Math.max(0, prefix - i * 16));
+      if (bits === 0) break;
+      var mask = bits === 16 ? 0xffff : ((0xffff << (16 - bits)) & 0xffff);
+      if ((hostHextets[i] & mask) !== (netHextets[i] & mask)) return false;
+    }
+    return true;
+  }
+
+  function ipMatchesCidr(ip, cidrOrIp) {
+    var s = String(ip || '').trim();
+    if (isIPv4(s)) return ipv4MatchesCidr(s, cidrOrIp);
+    if (isIP(s)) return ipv6MatchesCidr(s, cidrOrIp);
+    return false;
+  }
+
   function cidrPrefixLength(cidr) {
     var str = String(cidr || '').trim();
     if (isIPv4(str)) return 32;
-    if (!isCIDR(str)) return -1;
-    return Number(str.split('/')[1]);
+    if (isCIDR(str)) return Number(str.split('/')[1]);
+    if (isIPv6(str)) {
+      var idx = str.indexOf('/');
+      return idx === -1 ? 128 : Number(str.slice(idx + 1));
+    }
+    return -1;
   }
 
   /**
-   * Longest Prefix Match (LPM) route lookup over candidate IPv4 routes.
+   * Longest Prefix Match (LPM) route lookup over candidate IPv4 or IPv6 routes.
    * Tie-breaks by lowest metric.
    */
   function findLongestPrefixRoute(destIp, candidates) {
-    if (!isIPv4(destIp) || !Array.isArray(candidates)) return null;
+    var ipStr = String(destIp || '').trim();
+    if (!isIP(ipStr) || !Array.isArray(candidates)) return null;
     var best = null;
     var bestPrefix = -1;
     var bestMetric = Infinity;
 
     candidates.forEach(function (route) {
       if (route.enabled === false) return;
-      if (!ipv4MatchesCidr(destIp, route.destination)) return;
+      if (!ipMatchesCidr(ipStr, route.destination)) return;
       var prefix = cidrPrefixLength(route.destination);
       var metric = Number(route.metric !== undefined ? route.metric : 100);
       if (prefix > bestPrefix || (prefix === bestPrefix && metric < bestMetric)) {
@@ -171,18 +228,28 @@
   function isPortSpec(value, aliases) {
     var v = String(value || '').trim();
     if (!v || v.toLowerCase() === 'any') return true;
-    if (aliases && aliases[v]) return true;
-    return v.split(',').every(isPortToken);
+    if (aliases && aliases[v] && aliases[v].type === 'port') return true;
+    var parts = v.split(',').map(function (s) { return s.trim(); }).filter(Boolean);
+    return parts.length >= 1 && parts.length <= 32 && parts.every(isPortToken);
   }
 
   function isAddressSpec(value, aliases) {
     var v = String(value || '').trim();
     if (!v || v.toLowerCase() === 'any') return true;
-    if (aliases && aliases[v]) return true;
-    return isIPv4OrCIDR(v) || isIPv6(v);
+    if (aliases && aliases[v] && aliases[v].type !== 'port') return true;
+    var parts = v.split(',').map(function (s) { return s.trim(); }).filter(Boolean);
+    if (!parts.length || parts.length > 32) return false;
+    var v4 = 0;
+    var v6 = 0;
+    for (var i = 0; i < parts.length; i++) {
+      if (isIPv4OrCIDR(parts[i])) v4++;
+      else if (isIPv6(parts[i])) v6++;
+      else return false;
+    }
+    return !(v4 > 0 && v6 > 0);
   }
 
-  /* ---- Bitwise IPv4 & Port Matching (used by Firewall Rule Simulator) ---- */
+  /* ---- Bitwise IPv4/IPv6 & Port Matching (used by Firewall Rule Simulator) ---- */
 
   function ipv4ToInt(ip) {
     var parts = ip.split('.').map(Number);
@@ -205,12 +272,10 @@
   function ipMatchesRuleTarget(ip, target, aliases) {
     var t = String(target || '').trim();
     if (!t || t.toLowerCase() === 'any') return true;
-    if (aliases && aliases[t]) {
-      return aliases[t].members.some(function (member) {
-        return ipv4MatchesCidr(ip, member);
-      });
-    }
-    return ipv4MatchesCidr(ip, t);
+    var list = aliases && aliases[t] ? aliases[t].members : t.split(',');
+    return list.some(function (member) {
+      return ipMatchesCidr(ip, String(member).trim());
+    });
   }
 
   function portMatchesRuleTarget(portNum, target, aliases) {
@@ -231,6 +296,7 @@
   }
 
   Hive.validators = {
+    isIP: isIP,
     isIPv4: isIPv4,
     isCIDR: isCIDR,
     isIPv4OrCIDR: isIPv4OrCIDR,
@@ -255,6 +321,8 @@
     isAddressSpec: isAddressSpec,
     ipv4ToInt: ipv4ToInt,
     ipv4MatchesCidr: ipv4MatchesCidr,
+    ipv6MatchesCidr: ipv6MatchesCidr,
+    ipMatchesCidr: ipMatchesCidr,
     ipMatchesRuleTarget: ipMatchesRuleTarget,
     portMatchesRuleTarget: portMatchesRuleTarget
   };

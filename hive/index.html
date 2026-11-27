@@ -63,7 +63,7 @@
           <label for="q-login-pass">Password</label>
           <div class="ui action input">
             <input type="password" id="q-login-pass" name="password" placeholder="Enter administrator password" autocomplete="current-password" required>
-            <button type="button" class="ui icon button q-btn-ghost" id="q-login-toggle-pw" aria-label="Show or hide password" title="Show / Hide Password">
+            <button type="button" class="ui icon button q-btn-ghost" id="q-login-toggle-pw" aria-label="Show or hide password" aria-pressed="false" title="Show / Hide Password">
               <i data-lucide="eye" class="q-icon q-icon-sm"></i>
             </button>
           </div>
@@ -191,7 +191,7 @@
           </button>
 
           <!-- User / System Profile Menu -->
-          <div class="ui top right pointing dropdown q-profile-trigger q-header-dropdown" data-q-manual-init aria-label="Operator profile menu">
+          <div class="ui top right pointing dropdown q-profile-trigger q-header-dropdown" data-q-manual-init tabindex="0" role="button" aria-haspopup="menu" aria-label="Operator profile menu">
             <span class="q-avatar" data-q-user-initials aria-hidden="true">AD</span>
             <span class="q-profile-meta">
               <span class="q-profile-name" data-q-user-name>admin</span>
@@ -234,7 +234,7 @@
       <!-- Main Workspace -->
       <main id="main-content" class="q-main-content" tabindex="-1">
         <!-- Active Module Mount Target (All 16/16 Routes) -->
-        <section id="q-module-mount" aria-live="polite"></section>
+        <section id="q-module-mount"></section>
 
         <!-- Placeholder View for Unknown Routes -->
         <section id="q-shell-placeholder-view" aria-labelledby="q-placeholder-title" hidden>
@@ -327,7 +327,7 @@
   </aside>
 
   <!-- Shared Modal: Quick Command Palette (Ctrl+K) -->
-  <div class="ui small modal" id="q-cmd-modal" role="dialog" aria-labelledby="q-cmd-title">
+  <div class="ui small modal q-shell-modal" id="q-cmd-modal" role="dialog" aria-labelledby="q-cmd-title">
     <div class="header">
       <span class="q-modal-header-title" id="q-cmd-title">
         <i data-lucide="search" class="q-icon q-text-accent"></i>
@@ -351,7 +351,7 @@
   </div>
 
   <!-- Shared Modal: Review & Apply Staged Changes -->
-  <div class="ui small modal" id="q-staged-modal" role="dialog" aria-labelledby="q-staged-title">
+  <div class="ui small modal q-shell-modal" id="q-staged-modal" role="dialog" aria-labelledby="q-staged-title">
     <div class="header">
       <span class="q-modal-header-title" id="q-staged-title">
         <i data-lucide="git-commit-horizontal" class="q-icon q-text-accent"></i>
@@ -375,7 +375,7 @@
   </div>
 
   <!-- Shared Shell Modal: Keyboard Shortcuts -->
-  <div class="ui small modal" id="q-shortcuts-modal" role="dialog" aria-labelledby="q-shortcuts-title">
+  <div class="ui small modal q-shell-modal" id="q-shortcuts-modal" role="dialog" aria-labelledby="q-shortcuts-title">
     <div class="header">
       <span class="q-modal-header-title" id="q-shortcuts-title">
         <i data-lucide="keyboard" class="q-icon q-text-accent"></i>
@@ -411,7 +411,7 @@
   </div>
 
   <!-- Shared Shell Modal: Session Context -->
-  <div class="ui small modal" id="q-session-modal" role="dialog" aria-labelledby="q-session-title">
+  <div class="ui small modal q-shell-modal" id="q-session-modal" role="dialog" aria-labelledby="q-session-title">
     <div class="header">
       <span class="q-modal-header-title" id="q-session-title">
         <i data-lucide="terminal" class="q-icon q-text-accent"></i>
@@ -460,7 +460,6 @@
   <script src="assets/js/core/validators.js"></script>
   <script src="assets/js/core/formatters.js"></script>
   <script src="assets/js/core/charts.js"></script>
-  <script src="assets/js/data/mock-db.js"></script>
   <script src="assets/js/core/store.js"></script>
   <script src="assets/js/data/services.js"></script>
   <script src="assets/js/core/theme.js"></script>

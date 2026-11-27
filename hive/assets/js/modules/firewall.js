@@ -198,20 +198,42 @@
       ok = false;
     }
 
-    var membersValid = members.length === 1 && members.every(function (m) {
-      if (type === 'port') return m.toLowerCase() !== 'any' && isSingleOrRangePort(m);
-      return v.isIPv4OrCIDR(m) || v.isIPv6(m);
-    });
+    var membersValid = false;
+    if (members.length >= 1 && members.length <= 32) {
+      if (type === 'port') {
+        membersValid = members.every(function (m) {
+          return m.toLowerCase() !== 'any' && v.isPortSpec(m);
+        });
+      } else {
+        membersValid = v.isAddressSpec(members.join(','), null);
+      }
+    }
     if (!membersValid) {
       $('#q-al-mem-field').addClass('error');
-      $('#q-al-mem-err').text(type === 'port' ? 'Enter a single port or range (e.g. 443 or 8000-8080).' : 'Enter a valid IP or CIDR target (e.g. 192.168.10.0/24).').removeAttr('hidden');
+      $('#q-al-mem-err').text(type === 'port' ? 'Enter 1–32 ports or ranges (e.g. 80, 443, 8000-8080).' : 'Enter 1–32 valid IP or CIDR targets of the same IP family.').removeAttr('hidden');
       ok = false;
     }
     if (!ok) return;
 
+    var origName = state.editingAliasName;
     Hive.services.firewall
-      .saveAlias({ originalName: state.editingAliasName, name: name, type: type, members: members, description: description })
+      .saveAlias({ originalName: origName, name: name, type: type, members: members, description: description })
       .then(function () {
+        if (origName && origName !== name && Hive.store) {
+          var rules = Hive.store.getState().firewallRules || [];
+          var hasRefs = rules.some(function (r) {
+            return r.source === origName || r.destination === origName || r.port === origName;
+          });
+          if (hasRefs) {
+            Hive.store.stageMutation({ module: 'Firewall' }, function (st) {
+              (st.firewallRules || []).forEach(function (r) {
+                if (r.source === origName) r.source = name;
+                if (r.destination === origName) r.destination = name;
+                if (r.port === origName) r.port = name;
+              });
+            });
+          }
+        }
         resetAliasForm();
         Hive.ui.notify({ title: 'Alias Saved', message: 'Alias ' + name + ' saved locally.', type: 'success' });
       });
@@ -559,14 +581,17 @@
       $('#q-fw-src-err').text('ICMPv6 cannot be combined with IPv4 addresses.').removeAttr('hidden');
       ok = false;
     }
-    if (hasPort && !isSingleOrRangePort(port, state.aliases)) {
+    if (hasPort && !v.isPortSpec(port, state.aliases)) {
       $('#q-fw-port-field').addClass('error');
-      $('#q-fw-port-err').text('Enter any, a single port (443), or a range (8000-8080).').removeAttr('hidden');
+      $('#q-fw-port-err').text('Enter any, ports/ranges (80, 443, 8000-8080), or a port alias.').removeAttr('hidden');
       ok = false;
     }
     if (!ok) return;
 
-    var zone = inIface === 'eth0' ? 'lan' : inIface === 'wg0' ? 'vpn' : 'wan';
+    var stRef = Hive.store ? Hive.store.getState() : {};
+    var lanIf = (stRef.lanConfig && stRef.lanConfig.interface) || 'eth0';
+    var wgIf = (stRef.vpn && stRef.vpn.wireguard && stRef.vpn.wireguard.iface) || 'wg0';
+    var zone = inIface === lanIf ? 'lan' : inIface === wgIf ? 'vpn' : 'wan';
 
     Hive.services.firewall
       .saveRule({
@@ -609,22 +634,24 @@
   }
 
   function runPacketSimulator() {
+    var v = Hive.validators;
     var chain = $('#q-sim-chain').val() || 'input';
     var inIface = $('#q-sim-inif').val() || 'eth1';
+    var outIface = chain === 'forward' ? ($('#q-sim-outif').val() || '') : '';
     var protocol = $('#q-sim-proto').val() || 'TCP';
     var source = $.trim($('#q-sim-src').val());
     var destination = $.trim($('#q-sim-dst').val());
     var port = $.trim($('#q-sim-port').val());
 
-    if (!Hive.validators.isIPv4(source) || !Hive.validators.isIPv4(destination)) {
+    if (!v.isIP(source) || !v.isIP(destination) || v.isIPv6(source) !== v.isIPv6(destination)) {
       Hive.ui.notify({
         title: 'Invalid Test Packet',
-        message: 'Provide valid IPv4 addresses for both Source IP and Destination IP.',
+        message: 'Provide valid Source and Destination IP addresses of the same IP family (IPv4 or IPv6).',
         type: 'error'
       });
       return;
     }
-    if ((protocol === 'TCP' || protocol === 'UDP') && !Hive.validators.isPortNumber(port)) {
+    if ((protocol === 'TCP' || protocol === 'UDP') && !v.isPortNumber(port)) {
       Hive.ui.notify({
         title: 'Invalid Destination Port',
         message: 'Enter a valid TCP/UDP destination port between 1 and 65535.',
@@ -634,7 +661,7 @@
     }
 
     Hive.services.firewall
-      .simulatePacket({ chain: chain, inIface: inIface, protocol: protocol, source: source, destination: destination, port: port })
+      .simulatePacket({ chain: chain, inIface: inIface, outIface: outIface, protocol: protocol, source: source, destination: destination, port: port })
       .then(function (res) {
         var fmt = Hive.format;
         var esc = fmt.escapeHtml;
@@ -741,7 +768,7 @@
         '  <div class="q-card-header" style="margin-bottom:var(--q-space-3);padding-bottom:var(--q-space-2);">' +
         '    <div>' +
         '      <h2 class="q-card-title" style="font-size:var(--q-text-base);"><i data-lucide="radar" class="q-icon q-text-accent"></i><span>Packet Match Simulator</span></h2>' +
-        '      <p class="q-card-subtitle">Evaluate a synthetic IPv4 packet against custom <code>input</code> or <code>forward</code> rules.</p>' +
+        '      <p class="q-card-subtitle">Evaluate a synthetic IPv4 or IPv6 packet against custom <code>input</code> or <code>forward</code> rules.</p>' +
         '    </div>' +
         '  </div>' +
         '  <form class="ui form q-sim-grid" id="q-sim-form" novalidate>' +
@@ -752,12 +779,17 @@
         '    </div>' +
         '    <div class="field" style="margin:0;"><label>In Interface</label>' +
         '      <div class="ui fluid selection dropdown" id="q-sim-inif-dd"><input type="hidden" id="q-sim-inif" value="eth1"><i class="dropdown icon"></i><div class="text">eth1</div>' +
-        '        <div class="menu"><div class="item" data-value="eth1">eth1 (WAN)</div><div class="item" data-value="eth0">eth0 (LAN)</div><div class="item" data-value="ppp0">ppp0 (PPPoE)</div><div class="item" data-value="wg0">wg0 (VPN)</div></div>' +
+        '        <div class="menu">' + buildInterfaceItems(false) + '</div>' +
+        '      </div>' +
+        '    </div>' +
+        '    <div class="field" style="margin:0;"><label>Out Iface (Fwd)</label>' +
+        '      <div class="ui fluid selection dropdown" id="q-sim-outif-dd"><input type="hidden" id="q-sim-outif" value=""><i class="dropdown icon"></i><div class="text">Any Interface</div>' +
+        '        <div class="menu">' + buildInterfaceItems(true) + '</div>' +
         '      </div>' +
         '    </div>' +
         '    <div class="field" style="margin:0;"><label>Protocol</label>' +
         '      <div class="ui fluid selection dropdown" id="q-sim-proto-dd" data-q-manual-init><input type="hidden" id="q-sim-proto" value="TCP"><i class="dropdown icon"></i><div class="text">TCP</div>' +
-        '        <div class="menu"><div class="item" data-value="TCP">TCP</div><div class="item" data-value="UDP">UDP</div><div class="item" data-value="ICMP">ICMP</div></div>' +
+        '        <div class="menu"><div class="item" data-value="TCP">TCP</div><div class="item" data-value="UDP">UDP</div><div class="item" data-value="ICMP">ICMP</div><div class="item" data-value="ICMPV6">ICMPv6</div></div>' +
         '      </div>' +
         '    </div>' +
         '    <div class="field" style="margin:0;"><label for="q-sim-src">Source IP</label><input id="q-sim-src" type="text" class="q-mono" value="198.51.100.25"></div>' +
@@ -819,7 +851,8 @@
 
       $('#q-sim-proto-dd').dropdown({
         onChange: function (val) {
-          var isIcmp = String(val || '').toUpperCase() === 'ICMP';
+          var pUp = String(val || '').toUpperCase();
+          var isIcmp = pUp === 'ICMP' || pUp === 'ICMPV6';
           var $port = $('#q-sim-port');
           $port.prop('disabled', isIcmp);
           if (isIcmp) $port.val('');
@@ -831,7 +864,21 @@
       renderTable();
     });
 
-    // Global Toggles Submit
+    // Global Toggles Auto-Stage + Port Submit
+    $container.on('change.qFirewall', '#q-fw-offload, #q-fw-tdns, #q-fw-wgexp', function () {
+      var wgPort = Number($('#q-fw-wgport').val() || 51820);
+      var patch = {
+        flowOffload: $('#q-fw-offload').is(':checked'),
+        transparentDns: $('#q-fw-tdns').is(':checked'),
+        exposeWireguard: $('#q-fw-wgexp').is(':checked'),
+        wireguardPort: Hive.validators.isPortNumber(wgPort) ? wgPort : (state.config.wireguardPort || 51820)
+      };
+      Hive.services.firewall.stageToggles(patch, { reason: 'inline-toggle' }).then(function () {
+        state.config = JSON.parse(JSON.stringify(Hive.store.getState().firewallConfig));
+        renderTogglesCard();
+      });
+    });
+
     $container.on('submit.qFirewall', '#q-fw-toggles-form', function (e) {
       e.preventDefault();
       var wgPort = Number($('#q-fw-wgport').val() || 51820);
@@ -1068,6 +1115,18 @@
     });
     $(document).on('click.qFirewallModal', '.q-al-del-btn', function () {
       var name = $(this).attr('data-name');
+      var inUse = (state.rules || []).some(function (r) {
+        return r.source === name || r.destination === name || r.port === name;
+      });
+      if (inUse) {
+        Hive.ui.notify({
+          title: 'Alias In Use',
+          message: 'Alias "' + name + '" is referenced by one or more firewall rules. Update or remove those rules first.',
+          type: 'warning',
+          displayTime: 4200
+        });
+        return;
+      }
       Hive.services.firewall.deleteAlias(name).then(function () {
         if (state.editingAliasName === name) resetAliasForm();
         Hive.ui.notify({ title: 'Alias Removed', message: 'Alias ' + name + ' deleted.', type: 'warning' });
@@ -1112,7 +1171,7 @@
 
     state.stateListener = function (e) {
       var reason = e && e.detail ? e.detail.reason : '';
-      if (reason === 'telemetry' || reason === 'flows-tick' || reason === 'audit' || reason === 'kernel-log') return;
+      if (Hive.store.isRuntimeOnlyReason(reason)) return;
       if (reason === 'inline-toggle') {
         Hive.services.firewall.getOverview().then(function (data) {
           state.rules = data.rules || [];

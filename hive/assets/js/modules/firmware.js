@@ -20,10 +20,17 @@
     $('#q-restore-confirm-modal').modal('hide').remove();
   }
 
-  function formatMbOrGb(bytes) {
-    var mb = Number(bytes || 0) / 1048576;
+  function formatDiskMb(mbVal, bytesFallback) {
+    var mb = mbVal !== undefined && mbVal !== null ? Number(mbVal) : Number(bytesFallback || 0) / 1048576;
     if (mb >= 1024) return (mb / 1024).toFixed(2) + ' GB';
     return mb.toFixed(1) + ' MB';
+  }
+
+  function diskPartitionLabel(mount) {
+    if (mount === '/var/log') return '/var/log (RAM tmpfs — SD wear protection)';
+    if (mount === '/boot') return '/boot (FAT32 Boot Firmware Partition)';
+    if (mount === '/') return '/ (Persistent Root Filesystem)';
+    return mount + ' (Mounted Partition)';
   }
 
   function renderContent() {
@@ -41,18 +48,19 @@
 
     var disks = Array.isArray(sys.disks) && sys.disks.length
       ? sys.disks
-      : [{ mount: '/', total_bytes: 0, used_bytes: 0, used_percent: 0 }];
+      : [{ mount: '/', total_mb: 0, used_mb: 0, used_pct: 0 }];
 
     var diskHtml = disks
       .map(function (d) {
-        var pct = Math.min(100, Math.max(0, Math.round(Number(d.used_percent || 0))));
+        var rawPct = d.used_pct !== undefined ? d.used_pct : d.used_percent;
+        var pct = Math.min(100, Math.max(0, Math.round(Number(rawPct || 0))));
         var sev = fmt.progressSeverityClass(pct);
-        var label = d.mount === '/var/log' ? '/var/log (RAM tmpfs — SD wear protection)' : d.mount + ' (Persistent Root Filesystem)';
+        var label = diskPartitionLabel(d.mount || '/');
         return (
           '<div style="margin-bottom:var(--q-space-3);">' +
           '  <div style="display:flex;justify-content:space-between;margin-bottom:6px;font-size:12.5px;">' +
           '    <strong class="q-mono">' + esc(label) + '</strong>' +
-          '    <span class="q-mono q-text-secondary">' + formatMbOrGb(d.used_bytes) + ' / ' + formatMbOrGb(d.total_bytes) + ' (' + pct + '%)</span>' +
+          '    <span class="q-mono q-text-secondary">' + formatDiskMb(d.used_mb, d.used_bytes) + ' / ' + formatDiskMb(d.total_mb, d.total_bytes) + ' (' + pct + '%)</span>' +
           '  </div>' +
           '  <div class="ui tiny ' + sev + ' progress" data-percent="' + pct + '" style="margin:0;"><div class="bar" style="width:' + pct + '%;"></div></div>' +
           '</div>'
@@ -60,7 +68,7 @@
       })
       .join('');
     state.$root.find('#q-fw-disks').html(diskHtml);
-    if (Hive.icons) Hive.icons.render();
+    if (Hive.icons) Hive.icons.render(state.$root[0]);
   }
 
   function loadAndRender() {
@@ -148,14 +156,7 @@
       Hive.services.firmware
         .downloadBackup()
         .then(function (res) {
-          var url = URL.createObjectURL(res.blob);
-          var a = document.createElement('a');
-          a.href = url;
-          a.download = res.filename || 'netbee-backup.tar.gz';
-          document.body.appendChild(a);
-          a.click();
-          document.body.removeChild(a);
-          URL.revokeObjectURL(url);
+          Hive.ui.downloadBlob(res.filename || 'netbee-backup.tar.gz', res.blob);
           Hive.ui.notify({ title: 'Backup Downloaded', message: 'Saved ' + (res.filename || 'netbee-backup.tar.gz') + '.', type: 'success' });
         })
         .catch(function (err) {
@@ -207,7 +208,7 @@
 
     state.stateListener = function (e) {
       var reason = e && e.detail ? e.detail.reason : '';
-      if (reason === 'telemetry' || reason === 'flows-tick' || reason === 'audit') return;
+      if (Hive.store.isRuntimeOnlyReason(reason)) return;
       loadAndRender();
     };
     window.addEventListener('hive:statechange', state.stateListener);

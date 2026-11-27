@@ -201,7 +201,8 @@
   }
 
   function syncRollbackBanner(status) {
-    if (!status || !status.pending) {
+    var isPending = Boolean(status && (status.active || status.pending));
+    if (!isPending) {
       clearRollbackTimer();
       return;
     }
@@ -211,7 +212,7 @@
     $('#q-rollback-countdown').text(rem + 's');
     $('#q-staged-banner').removeClass('is-visible').attr('aria-hidden', 'true');
     $('#q-rollback-banner').addClass('is-visible').attr('aria-hidden', 'false');
-    if (Hive.icons) Hive.icons.render();
+    if (Hive.icons) Hive.icons.render($('#q-rollback-banner')[0]);
 
     if (rollbackInterval) window.clearInterval(rollbackInterval);
     rollbackInterval = window.setInterval(function () {
@@ -530,17 +531,17 @@
     var html = '';
     cmdState.items.forEach(function (item, idx) {
       if (item.group !== lastGroup) {
-        html += '<div class="q-cmd-group">' + esc(item.group) + '</div>';
+        html += '<div class="q-cmd-group" role="presentation">' + esc(item.group) + '</div>';
         lastGroup = item.group;
       }
       html +=
-        '<button type="button" class="q-cmd-item' + (idx === 0 ? ' is-selected' : '') + '" data-cmd-idx="' + idx + '">' +
+        '<button type="button" role="option" aria-selected="' + (idx === 0 ? 'true' : 'false') + '" class="q-cmd-item' + (idx === 0 ? ' is-selected' : '') + '" data-cmd-idx="' + idx + '">' +
         '  <span class="q-cmd-item-left"><i data-lucide="' + esc(item.icon) + '" class="q-icon q-icon-sm"></i><span>' + esc(item.label) + '</span></span>' +
         '  <span class="q-cmd-item-sub">' + esc(item.sub) + '</span>' +
         '</button>';
     });
     $list.html(html);
-    if (Hive.icons) Hive.icons.render();
+    if (Hive.icons) Hive.icons.render($list[0]);
   }
 
   function openCommandPalette() {
@@ -566,9 +567,12 @@
   function bindShellEvents(pageType) {
     // Login form submission & password visibility toggle
     $(document).on('click', '#q-login-toggle-pw', function () {
+      var $btn = $(this);
       var $inp = $('#q-login-pass');
-      var isPw = $inp.attr('type') === 'password';
-      $inp.attr('type', isPw ? 'text' : 'password');
+      var reveal = $inp.attr('type') === 'password';
+      $inp.attr('type', reveal ? 'text' : 'password');
+      $btn.attr('aria-pressed', String(reveal)).html('<i data-lucide="' + (reveal ? 'eye-off' : 'eye') + '" class="q-icon q-icon-sm"></i>');
+      if (Hive.icons) Hive.icons.render($btn[0]);
     });
 
     $(document).on('submit', '#q-login-form', function (e) {
@@ -643,7 +647,7 @@
           .then(function (result) {
             $('#q-staged-modal').modal('hide');
             if (!result || !result.count) return;
-            if (result.pendingCommit && result.pendingCommit.pending) {
+            if (result.pendingCommit && (result.pendingCommit.active || result.pendingCommit.pending)) {
               syncRollbackBanner(result.pendingCommit);
             }
             if (result.newUrl) {
@@ -660,7 +664,6 @@
                 type: 'success'
               });
             }
-            if (Hive.router) Hive.router.resolve();
           })
           .catch(function (err) {
             Hive.ui.notify({
@@ -685,7 +688,6 @@
             message: 'Reverted ' + discarded + ' uncommitted ' + (discarded === 1 ? 'edit' : 'edits') + '.',
             type: 'warning'
           });
-          if (Hive.router) Hive.router.resolve();
         });
       });
 
@@ -721,7 +723,6 @@
               message: 'Restored pre-change router state immediately.',
               type: 'warning'
             });
-            if (Hive.router) Hive.router.resolve();
           })
           .catch(function (err) {
             Hive.ui.notify({ title: 'Rollback Failed', message: err.message, type: 'error' });
@@ -778,21 +779,35 @@
       Hive.theme.toggle({ notify: true });
     });
 
+    $(document).on('keydown', '.q-profile-trigger', function (e) {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        $(this).dropdown('toggle');
+      }
+    });
+
     $(document).on('click', '[data-q-action="reboot-router"]', function () {
-      if (!window.confirm('Reboot NetBee OS router now? Active network sessions will briefly drop.')) return;
-      Hive.services.settings
-        .reboot()
-        .then(function () {
-          Hive.ui.notify({
-            title: 'Rebooting Router',
-            message: 'NetBee OS is restarting. Reconnecting when HTTPS comes back online...',
-            type: 'warning',
-            displayTime: 8000
-          });
-        })
-        .catch(function (err) {
-          Hive.ui.notify({ title: 'Reboot Failed', message: err.message, type: 'error' });
-        });
+      Hive.ui.confirm({
+        title: 'Reboot NetBee OS Router',
+        message: 'Active LAN/WAN sessions will pause briefly (~25 seconds) while the Raspberry Pi 5 restarts.',
+        confirmText: 'Reboot Now',
+        danger: true,
+        onConfirm: function () {
+          Hive.services.settings
+            .reboot()
+            .then(function () {
+              Hive.ui.notify({
+                title: 'Rebooting Router',
+                message: 'NetBee OS is restarting. Reconnecting when HTTPS comes back online...',
+                type: 'warning',
+                displayTime: 8000
+              });
+            })
+            .catch(function (err) {
+              Hive.ui.notify({ title: 'Reboot Failed', message: err.message, type: 'error' });
+            });
+        }
+      });
     });
 
     $(document).on('click', '[data-q-action="sign-out"]', function () {
@@ -823,7 +838,8 @@
         return;
       }
       var $items = $('#q-cmd-list .q-cmd-item');
-      $items.removeClass('is-selected').eq(cmdState.selectedIdx).addClass('is-selected')[0].scrollIntoView({ block: 'nearest' });
+      $items.removeClass('is-selected').attr('aria-selected', 'false');
+      $items.eq(cmdState.selectedIdx).addClass('is-selected').attr('aria-selected', 'true')[0].scrollIntoView({ block: 'nearest' });
     });
 
     // Global Keyboard Shortcuts

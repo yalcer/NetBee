@@ -877,18 +877,6 @@
 .q-legend-dot.is-vpn  { background-color: var(--q-vpn); }
 .q-legend-dot.is-icmp { background-color: var(--q-wireless); }
 
-.q-token-secret-box {
-  padding: var(--q-space-3) var(--q-space-4);
-  border-radius: var(--q-radius-md);
-  background-color: var(--q-success-soft);
-  border: 1px solid var(--q-success-border);
-  margin-bottom: var(--q-space-4);
-}
-
-.q-token-secret-box[hidden] {
-  display: none !important;
-}
-
 .q-backup-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

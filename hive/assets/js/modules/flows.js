@@ -156,8 +156,8 @@
           '  <td class="q-mono"><strong>' + formatTransferMb(f.bytesMb) + '</strong><span class="q-rule-desc">' + fmt.number(f.packets) + ' pkts</span></td>' +
           '  <td class="q-mono q-text-secondary">TTL ' + formatDuration(f.timeoutSec) + '</td>' +
           '  <td><div class="q-row-actions">' +
-          '    <button type="button" class="ui mini icon button q-btn-ghost q-fl-inspect-btn" data-id="' + esc(f.id) + '" title="Inspect flow"><i data-lucide="eye" class="q-icon q-icon-sm"></i></button>' +
-          '    <button type="button" class="ui mini icon button q-btn-ghost q-fl-kill-btn" data-id="' + esc(f.id) + '" title="Terminate state"><i data-lucide="trash-2" class="q-icon q-icon-sm q-text-danger"></i></button>' +
+          '    <button type="button" class="ui mini icon button q-btn-ghost q-fl-inspect-btn" data-id="' + esc(f.id) + '" title="Inspect flow" aria-label="Inspect flow ' + esc(srcEndpoint + ' to ' + dstEndpoint) + '"><i data-lucide="eye" class="q-icon q-icon-sm"></i></button>' +
+          '    <button type="button" class="ui mini icon button q-btn-ghost q-fl-kill-btn" data-id="' + esc(f.id) + '" title="Terminate state" aria-label="Terminate flow ' + esc(srcEndpoint + ' to ' + dstEndpoint) + '"><i data-lucide="trash-2" class="q-icon q-icon-sm q-text-danger"></i></button>' +
           '  </div></td>' +
           '</tr>'
         );
@@ -302,26 +302,31 @@
     });
 
     $container.on('click.qFlows', '#q-fl-flush-btn', function () {
-      if (!window.confirm('Flush the entire nf_conntrack table? Existing connections may reset.')) return;
-      Hive.services.flows
-        .flushAll()
-        .then(function (list) {
-          state.flows = list;
-          updateSummaryAndTable();
-          Hive.ui.notify({ title: 'Conntrack Flushed', message: 'Cleared kernel connection tracking table.', type: 'warning' });
-        })
-        .catch(function (err) {
-          Hive.ui.notify({ title: 'Flush Failed', message: err.message, type: 'error' });
-        });
+      Hive.ui.confirm({
+        title: 'Flush Conntrack State Table',
+        message: 'Flush the entire nf_conntrack table? Active LAN/WAN TCP and VPN sessions may briefly reset.',
+        confirmText: 'Flush All Flows',
+        danger: true,
+        onConfirm: function () {
+          Hive.services.flows
+            .flushAll()
+            .then(function (list) {
+              state.flows = list;
+              updateSummaryAndTable();
+              Hive.ui.notify({ title: 'Conntrack Flushed', message: 'Cleared kernel connection tracking table.', type: 'warning' });
+            })
+            .catch(function (err) {
+              Hive.ui.notify({ title: 'Flush Failed', message: err.message, type: 'error' });
+            });
+        }
+      });
     });
 
     $container.on('click.qFlows', '.q-fl-inspect-btn', function () {
       openInspectModal($(this).attr('data-id'));
     });
 
-    function killFlowById(id) {
-      var target = state.flows.find(function (x) { return x.id === id; });
-      if (!target) return;
+    function executeKillFlow(target) {
       Hive.services.flows
         .terminate(target)
         .then(function () {
@@ -333,6 +338,28 @@
         .catch(function (err) {
           Hive.ui.notify({ title: 'Terminate Failed', message: err.message, type: 'error' });
         });
+    }
+
+    function killFlowById(id) {
+      var target = state.flows.find(function (x) { return x.id === id; });
+      if (!target) return;
+      var lanIp = (Hive.store.getState().lanConfig && Hive.store.getState().lanConfig.ip) || '192.168.10.1';
+      var isMgmt =
+        (target.dstIp === lanIp || target.dstIp === window.location.hostname) &&
+        (String(target.dstPort) === '443' || String(target.dstPort) === '22');
+      if (isMgmt) {
+        Hive.ui.confirm({
+          title: 'Terminate Management Session?',
+          message: 'This flow targets router port :' + target.dstPort + ' (' + target.dstIp + '). Terminating it may disconnect your active Web UI or SSH session.',
+          confirmText: 'Terminate Flow',
+          danger: true,
+          onConfirm: function () {
+            executeKillFlow(target);
+          }
+        });
+        return;
+      }
+      executeKillFlow(target);
     }
 
     $container.on('click.qFlows', '.q-fl-kill-btn', function () {

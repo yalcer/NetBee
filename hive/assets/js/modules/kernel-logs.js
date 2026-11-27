@@ -34,18 +34,6 @@
     });
   }
 
-  function downloadBlob(content, mime, filename) {
-    var blob = new Blob([content], { type: mime });
-    var url = URL.createObjectURL(blob);
-    var a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-  }
-
   function refreshSubsystemDropdown() {
     if (!state.$root) return;
     var esc = Hive.format.escapeHtml;
@@ -91,7 +79,7 @@
       .map(function (r) {
         var lv = lvlMap[r.level] || lvlMap.info;
         return (
-          '<tr class="q-audit-row-clickable" data-id="' + esc(r.id) + '">' +
+          '<tr class="q-audit-row-clickable" tabindex="0" role="button" data-id="' + esc(r.id) + '">' +
           '  <td class="q-mono q-text-muted" style="white-space:nowrap;">[' + esc(r.bootTime) + ']</td>' +
           '  <td><span class="ui label ' + lv.cls + ' q-mono"><span class="q-status-dot ' + lv.dot + '"></span>' + esc(r.level) + '</span></td>' +
           '  <td><span class="ui label q-badge-square q-mono">' + esc(r.subsystem) + '</span></td>' +
@@ -218,8 +206,20 @@
       renderTable();
     });
 
+    $container.on('click.qKernLogs', '.q-klog-view-btn', function (e) {
+      e.stopPropagation();
+      openDetailModal($(this).attr('data-id'));
+    });
+
     $container.on('click.qKernLogs', '.q-audit-row-clickable', function () {
       openDetailModal($(this).attr('data-id'));
+    });
+
+    $container.on('keydown.qKernLogs', '.q-audit-row-clickable', function (e) {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        openDetailModal($(this).attr('data-id'));
+      }
     });
 
     $container.on('click.qKernLogs', '#q-klog-poll-btn', function () {
@@ -236,13 +236,13 @@
 
     $container.on('click.qKernLogs', '#q-klog-export-dmesg', function () {
       var rows = getFiltered();
-      downloadBlob(Hive.services.logs.toDmesgText(rows), 'text/plain;charset=utf-8', 'netbee-dmesg.log');
+      Hive.ui.downloadBlob('netbee-dmesg.log', Hive.services.logs.toDmesgText(rows), 'text/plain;charset=utf-8');
       Hive.ui.notify({ title: 'Kernel Log Exported', message: 'Downloaded netbee-dmesg.log (' + rows.length + ' lines).', type: 'success' });
     });
 
     state.stateListener = function (e) {
       var reason = e && e.detail ? e.detail.reason : '';
-      if (reason === 'telemetry' || reason === 'flows-tick' || reason === 'audit' || reason === 'dmesg-refresh') return;
+      if (Hive.store.isRuntimeOnlyReason(reason)) return;
       loadAndRender();
     };
     window.addEventListener('hive:statechange', state.stateListener);

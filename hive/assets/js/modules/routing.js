@@ -234,8 +234,8 @@
 
   function runLpmLookup() {
     var ip = $.trim($('#q-lpm-ip').val());
-    if (!Hive.validators.isIPv4(ip)) {
-      Hive.ui.notify({ title: 'Invalid IPv4', message: 'Enter a valid IPv4 address (e.g. 192.168.10.42 or 1.1.1.1).', type: 'error' });
+    if (!Hive.validators.isIP(ip)) {
+      Hive.ui.notify({ title: 'Invalid IP Address', message: 'Enter a valid IPv4 or IPv6 address (e.g. 192.168.10.42, 1.1.1.1, or 2001:db8::1).', type: 'error' });
       return;
     }
     Hive.services.routing.lookupRoute(ip).then(function (match) {
@@ -315,7 +315,7 @@
         '    </div>' +
         '  </div>' +
         '  <form class="ui form q-lpm-bar" id="q-lpm-form" novalidate>' +
-        '    <div class="field" style="margin:0;"><label for="q-lpm-ip">Destination IPv4 Address</label><input id="q-lpm-ip" type="text" class="q-mono" value="1.1.1.1" placeholder="e.g. 192.168.10.42 or 1.1.1.1"></div>' +
+        '    <div class="field" style="margin:0;"><label for="q-lpm-ip">Destination IP Address</label><input id="q-lpm-ip" type="text" class="q-mono" value="1.1.1.1" placeholder="e.g. 192.168.10.42, 1.1.1.1, or 2001:db8::1"></div>' +
         '    <button type="submit" class="ui primary button" style="height:38px;">Resolve Route</button>' +
         '  </form>' +
         '  <div class="q-sim-result" id="q-lpm-result" hidden></div>' +
@@ -417,7 +417,11 @@
     $container.on('change.qRouting', '.q-rt-toggle input', function () {
       var $toggle = $(this).closest('.q-rt-toggle');
       var id = $toggle.attr('data-id');
-      Hive.services.routing.toggleRoute(id, this.checked);
+      var enabled = this.checked;
+      var $row = $toggle.closest('tr');
+      $row.toggleClass('q-rule-disabled', !enabled);
+      $row.find('td').eq(4).html('<span class="ui label ' + (enabled ? 'q-status-success' : '') + '">' + (enabled ? 'Active' : 'Disabled') + '</span>');
+      Hive.services.routing.toggleRoute(id, enabled);
     });
 
     $container.on('click.qRouting', '.q-rt-del-btn', function () {
@@ -431,7 +435,11 @@
 
     state.stateListener = function (e) {
       var reason = e && e.detail ? e.detail.reason : '';
-      if (reason === 'telemetry' || reason === 'audit' || reason === 'routing-refresh') return;
+      if (Hive.store.isRuntimeOnlyReason(reason)) return;
+      if (reason === 'inline-toggle') {
+        state.staticRoutes = JSON.parse(JSON.stringify(Hive.store.getState().staticRoutes || []));
+        return;
+      }
       loadAndRender();
     };
     window.addEventListener('hive:statechange', state.stateListener);

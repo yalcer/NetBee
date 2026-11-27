@@ -27,8 +27,27 @@
   function validUpstreamResolver(val) {
     var s = String(val || '').trim();
     if (!s) return false;
+    // Support AdGuardHome domain-scoped upstreams like [/lan/]192.168.10.2
+    if (s.charAt(0) === '[' && s.indexOf('/]') !== -1) {
+      var closeIdx = s.indexOf('/]');
+      var domSpec = s.slice(1, closeIdx + 1);
+      var rest = s.slice(closeIdx + 2).trim();
+      if (!/^\/[^/\s]+(\/[^/\s]+)*\/$/.test(domSpec)) return false;
+      if (rest === '#') return true;
+      s = rest;
+    }
     if (Hive.validators.isIPv4(s) || Hive.validators.isIPv6(s)) return true;
-    return /^(tls|https|quic|sdns):\/\/\S+$/i.test(s);
+    // IPv4:port
+    var v4Port = s.match(/^(\d+\.\d+\.\d+\.\d+):(\d{1,5})$/);
+    if (v4Port) {
+      return Hive.validators.isIPv4(v4Port[1]) && Hive.validators.isPortNumber(Number(v4Port[2]));
+    }
+    // [IPv6]:port
+    var v6Port = s.match(/^\[([0-9a-fA-F:]+)\]:(\d{1,5})$/);
+    if (v6Port) {
+      return Hive.validators.isIPv6(v6Port[1]) && Hive.validators.isPortNumber(Number(v6Port[2]));
+    }
+    return /^(tcp|tls|https|h3|quic|sdns):\/\/\S+$/i.test(s);
   }
 
   function renderModalsHtml() {
@@ -162,8 +181,8 @@
           '  <td class="q-mono q-text-secondary">' + esc(r.mac) + '</td>' +
           '  <td><span class="ui label q-badge-square q-mono">' + esc(r.iface) + '</span></td>' +
           '  <td><div class="q-row-actions">' +
-          '    <button type="button" class="ui mini icon button q-btn-ghost q-res-edit-btn" data-id="' + esc(r.id) + '"><i data-lucide="pencil" class="q-icon q-icon-sm"></i></button>' +
-          '    <button type="button" class="ui mini icon button q-btn-ghost q-res-del-btn" data-id="' + esc(r.id) + '"><i data-lucide="trash-2" class="q-icon q-icon-sm q-text-danger"></i></button>' +
+          '    <button type="button" class="ui mini icon button q-btn-ghost q-res-edit-btn" data-id="' + esc(r.id) + '" aria-label="Edit static lease ' + esc(r.hostname) + '"><i data-lucide="pencil" class="q-icon q-icon-sm"></i></button>' +
+          '    <button type="button" class="ui mini icon button q-btn-ghost q-res-del-btn" data-id="' + esc(r.id) + '" aria-label="Delete static lease ' + esc(r.hostname) + '"><i data-lucide="trash-2" class="q-icon q-icon-sm q-text-danger"></i></button>' +
           '  </div></td>' +
           '</tr>'
         );
@@ -171,9 +190,13 @@
       .join('');
     state.$root.find('#q-dhcp-res-tbody').html(resRows || '<tr><td colspan="5" style="text-align:center;padding:24px;color:var(--q-text-muted);">No static MAC reservations configured.</td></tr>');
 
-    state.$root.find('#q-dns-upstreams').val((state.dns.resolvers || []).join('\n'));
-    state.$root.find('#q-dns-cache').val(state.dns.cacheSize !== undefined ? state.dns.cacheSize : 4194304);
-    state.$root.find('#q-dns-sec-chk').checkbox(state.dns.dnssecEnabled ? 'set checked' : 'set unchecked');
+    var $dnsForm = state.$root.find('#q-dns-settings-form');
+    var dnsEditing = $dnsForm.length && $dnsForm[0].contains(document.activeElement);
+    if (!dnsEditing) {
+      state.$root.find('#q-dns-upstreams').val((state.dns.resolvers || []).join('\n'));
+      state.$root.find('#q-dns-cache').val(state.dns.cacheSize !== undefined ? state.dns.cacheSize : 4194304);
+      state.$root.find('#q-dns-sec-chk').checkbox(state.dns.dnssecEnabled ? 'set checked' : 'set unchecked');
+    }
 
     var ovRows = state.dns.overrides
       .map(function (ov) {
@@ -183,8 +206,8 @@
           '  <td><span class="ui label q-net-lan q-badge-square q-mono">' + esc(ov.type) + '</span></td>' +
           '  <td class="q-mono">' + esc(ov.value) + '</td>' +
           '  <td><div class="q-row-actions">' +
-          '    <button type="button" class="ui mini icon button q-btn-ghost q-dns-edit-btn" data-id="' + esc(ov.id) + '"><i data-lucide="pencil" class="q-icon q-icon-sm"></i></button>' +
-          '    <button type="button" class="ui mini icon button q-btn-ghost q-dns-del-btn" data-id="' + esc(ov.id) + '"><i data-lucide="trash-2" class="q-icon q-icon-sm q-text-danger"></i></button>' +
+          '    <button type="button" class="ui mini icon button q-btn-ghost q-dns-edit-btn" data-id="' + esc(ov.id) + '" aria-label="Edit DNS rewrite ' + esc(ov.hostname) + '"><i data-lucide="pencil" class="q-icon q-icon-sm"></i></button>' +
+          '    <button type="button" class="ui mini icon button q-btn-ghost q-dns-del-btn" data-id="' + esc(ov.id) + '" aria-label="Delete DNS rewrite ' + esc(ov.hostname) + '"><i data-lucide="trash-2" class="q-icon q-icon-sm q-text-danger"></i></button>' +
           '  </div></td>' +
           '</tr>'
         );
@@ -218,7 +241,8 @@
 
     var ok = true;
     $('#q-sc-start-field, #q-sc-end-field').removeClass('error');
-    $('#q-sc-start-err, #q-sc-end-err').attr('hidden', true);
+    $('#q-sc-start-err').text('Enter a valid IPv4 address.').attr('hidden', true);
+    $('#q-sc-end-err').text('Enter a valid IPv4 address.').attr('hidden', true);
 
     if (!v.isIPv4(rangeStart)) { $('#q-sc-start-field').addClass('error'); $('#q-sc-start-err').removeAttr('hidden'); ok = false; }
     if (!v.isIPv4(rangeEnd)) { $('#q-sc-end-field').addClass('error'); $('#q-sc-end-err').removeAttr('hidden'); ok = false; }
@@ -226,6 +250,31 @@
       $('#q-sc-end-field').addClass('error');
       $('#q-sc-end-err').text('End IP must be >= Start IP.').removeAttr('hidden');
       ok = false;
+    }
+    if (ok && Hive.store) {
+      var lanCfg = Hive.store.getState().lanConfig || {};
+      var lanIp = lanCfg.ip || '192.168.10.1';
+      var lanMask = lanCfg.netmask || '255.255.255.0';
+      if (v.isIPv4(lanIp) && v.isIPv4(lanMask)) {
+        var maskInt = v.ipv4ToInt(lanMask);
+        var netInt = (v.ipv4ToInt(lanIp) & maskInt) >>> 0;
+        var sInt = v.ipv4ToInt(rangeStart);
+        var eInt = v.ipv4ToInt(rangeEnd);
+        var gwInt = v.ipv4ToInt(lanIp);
+        if (((sInt & maskInt) >>> 0) !== netInt) {
+          $('#q-sc-start-field').addClass('error');
+          $('#q-sc-start-err').text('Start IP must belong to LAN subnet (' + lanIp + '/' + lanMask + ').').removeAttr('hidden');
+          ok = false;
+        } else if (((eInt & maskInt) >>> 0) !== netInt) {
+          $('#q-sc-end-field').addClass('error');
+          $('#q-sc-end-err').text('End IP must belong to LAN subnet (' + lanIp + '/' + lanMask + ').').removeAttr('hidden');
+          ok = false;
+        } else if (gwInt >= sInt && gwInt <= eInt) {
+          $('#q-sc-start-field').addClass('error');
+          $('#q-sc-start-err').text('Pool range cannot include the router LAN IP (' + lanIp + ').').removeAttr('hidden');
+          ok = false;
+        }
+      }
     }
     if (!ok) return;
 
@@ -255,10 +304,26 @@
 
     var ok = true;
     $('#q-res-host-field, #q-res-mac-field, #q-res-ip-field').removeClass('error');
-    $('#q-res-host-err, #q-res-mac-err, #q-res-ip-err').attr('hidden', true);
+    $('#q-res-host-err').text('Enter a valid hostname.').attr('hidden', true);
+    $('#q-res-mac-err').text('Enter a valid MAC (AA:BB:CC:DD:EE:FF).').attr('hidden', true);
+    $('#q-res-ip-err').text('Enter a valid IPv4 address.').attr('hidden', true);
     if (!v.isHostname(hostname)) { $('#q-res-host-field').addClass('error'); $('#q-res-host-err').removeAttr('hidden'); ok = false; }
     if (!v.isMAC(mac)) { $('#q-res-mac-field').addClass('error'); $('#q-res-mac-err').removeAttr('hidden'); ok = false; }
     if (!v.isIPv4(ip)) { $('#q-res-ip-field').addClass('error'); $('#q-res-ip-err').removeAttr('hidden'); ok = false; }
+    if (ok && state.dhcp && Array.isArray(state.dhcp.reservations)) {
+      var dupMac = state.dhcp.reservations.some(function (r) { return r.id !== state.editingResId && r.mac.toUpperCase() === mac; });
+      var dupIp = state.dhcp.reservations.some(function (r) { return r.id !== state.editingResId && r.ip === ip; });
+      if (dupMac) {
+        $('#q-res-mac-field').addClass('error');
+        $('#q-res-mac-err').text('This MAC address already has a static reservation.').removeAttr('hidden');
+        ok = false;
+      }
+      if (dupIp) {
+        $('#q-res-ip-field').addClass('error');
+        $('#q-res-ip-err').text('This IPv4 address is already assigned to another reservation.').removeAttr('hidden');
+        ok = false;
+      }
+    }
     if (!ok) return;
 
     Hive.services.dhcpDns.saveReservation({ id: state.editingResId, hostname: hostname, mac: mac, ip: ip }).then(function () {
@@ -281,13 +346,16 @@
 
   function saveDnsOvModal() {
     var v = Hive.validators;
-    var hostname = $.trim($('#q-dns-host').val());
-    var value = $.trim($('#q-dns-val').val());
+    var hostname = $.trim($('#q-dns-host').val()).toLowerCase().replace(/\.$/, '');
+    var value = $.trim($('#q-dns-val').val()).replace(/\.$/, '');
 
     var ok = true;
     $('#q-dns-host-field, #q-dns-val-field').removeClass('error');
     $('#q-dns-host-err, #q-dns-val-err').attr('hidden', true);
-    if (!hostname) { $('#q-dns-host-field').addClass('error'); $('#q-dns-host-err').removeAttr('hidden'); ok = false; }
+    var validRewriteHost =
+      Boolean(hostname) &&
+      (v.isHostname(hostname) || v.isDomainOrWildcard(hostname) || /^\*\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*$/i.test(hostname));
+    if (!validRewriteHost) { $('#q-dns-host-field').addClass('error'); $('#q-dns-host-err').removeAttr('hidden'); ok = false; }
     if (!v.isIPv4(value) && !v.isIPv6(value) && !v.isHostname(value)) {
       $('#q-dns-val-field').addClass('error');
       $('#q-dns-val-err').removeAttr('hidden');
@@ -497,7 +565,8 @@
 
     state.stateListener = function (e) {
       var reason = e && e.detail ? e.detail.reason : '';
-      if (reason !== 'telemetry' && reason !== 'audit') loadAndRender();
+      if (Hive.store.isRuntimeOnlyReason(reason)) return;
+      loadAndRender();
     };
     window.addEventListener('hive:statechange', state.stateListener);
   }

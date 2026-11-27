@@ -58,8 +58,8 @@
     var preview = [
       '# /etc/netbee/sqm.conf — Managed by netbeed',
       'ENABLED=' + (cfg.enabled ? '1' : '0') + '  WAN_IF="' + cfg.iface + '"',
-      'tc qdisc replace dev ' + cfg.iface + ' root cake bandwidth ' + cfg.uploadKbps + 'kbit diffserv4 nat dual-srchost overhead ' + cfg.overheadBytes,
-      'tc qdisc replace dev ifb0 root cake bandwidth ' + cfg.downloadKbps + 'kbit besteffort nat dual-dsthost ingress overhead ' + cfg.overheadBytes
+      'tc qdisc replace dev ' + cfg.iface + ' root cake bandwidth ' + cfg.uploadKbps + 'kbit diffserv4 dual-srchost nat nowash split-gso overhead ' + cfg.overheadBytes,
+      'tc qdisc replace dev ifb0 root cake bandwidth ' + cfg.downloadKbps + 'kbit diffserv4 dual-dsthost nat wash ingress split-gso overhead ' + cfg.overheadBytes
     ];
     if (state.sqm && state.sqm.statusOutput) {
       preview.push('', '# Live kernel qdisc status:', state.sqm.statusOutput.trim());
@@ -72,15 +72,20 @@
     var s = state.sqm;
     var esc = Hive.format.escapeHtml;
 
-    var ifaceHtml = state.interfaces
-      .filter(function (i) { return i.zone !== 'lan'; })
+    var seenDevices = {};
+    var nonLan = state.interfaces.filter(function (i) { return i.zone !== 'lan'; });
+    nonLan.forEach(function (i) { seenDevices[i.device] = true; });
+    if (!seenDevices.eth1) {
+      nonLan.push({ device: 'eth1', label: 'WAN Ethernet Interface' });
+    }
+    if (!seenDevices.ppp0) {
+      nonLan.push({ device: 'ppp0', label: 'PPPoE / Fiber ONT Session' });
+    }
+    var ifaceHtml = nonLan
       .map(function (i) {
         return '<div class="item" data-value="' + esc(i.device) + '"><span class="q-mono">' + esc(i.device) + '</span> — ' + esc(i.label) + '</div>';
       })
       .join('');
-    if (!ifaceHtml) {
-      ifaceHtml = '<div class="item" data-value="eth1"><span class="q-mono">eth1</span> — WAN Interface</div>';
-    }
     var $ifDd = $('#q-sqm-iface-dd');
     $ifDd.find('.menu').html(ifaceHtml);
     $ifDd.dropdown('refresh').dropdown('set selected', s.iface || 'eth1');
@@ -189,7 +194,7 @@
         '          <input type="hidden" id="q-sqm-iface" value="eth1"><i class="dropdown icon"></i><div class="text">eth1</div>' +
         '          <div class="menu"></div>' +
         '        </div>' +
-        '        <span class="q-field-hint">Select <code>eth1</code> for DHCP WAN or <code>ppp0</code> for PPPoE / Fiber ONT sessions.</span>' +
+        '        <span class="q-field-hint">Automatically targets <code>ppp0</code> in PPPoE / Fiber ONT mode and <code>eth1</code> in DHCP mode.</span>' +
         '      </div>' +
         '      <div class="field required" id="q-sqm-overhead-field">' +
         '        <label for="q-sqm-overhead">Link Layer Overhead (0 – 128 bytes)</label>' +
@@ -263,8 +268,7 @@
 
     state.stateListener = function (e) {
       var reason = e && e.detail ? e.detail.reason : '';
-      if (reason === 'telemetry' || reason === 'audit' || reason === 'sqm-status') return;
-      if (reason === 'inline-toggle') return;
+      if (Hive.store.isRuntimeOnlyReason(reason) || reason === 'inline-toggle') return;
       loadAndRender();
     };
     window.addEventListener('hive:statechange', state.stateListener);

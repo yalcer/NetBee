@@ -22,7 +22,7 @@
   function validOpenSshKey(raw) {
     var s = $.trim(raw || '');
     if (!s || s.length > 4096 || /[\r\n]/.test(s)) return false;
-    return /^(ssh-ed25519|ssh-rsa|ecdsa-sha2-nistp(?:256|384|521)|sk-ssh-ed25519@openssh\.com|sk-ecdsa-sha2-nistp256@openssh\.com)\s+[A-Za-z0-9+/=]{32,}/.test(s);
+    return Hive.validators.isSshPublicKey(s);
   }
 
   function renderModalsHtml() {
@@ -122,9 +122,13 @@
     state.$root.find('#q-os-users-tbody').html(userRows);
 
     // Tab 2: Dropbear SSH Policy & Authorized Keys
-    $('#q-ssh-pwauth-chk').checkbox(ssh.passwordAuth ? 'set checked' : 'set unchecked');
-    $('#q-ssh-root-chk').checkbox(ssh.allowRootLogin ? 'set checked' : 'set unchecked');
-    $('#q-ssh-timeout').val(ssh.idleTimeout !== undefined ? ssh.idleTimeout : 300);
+    var $sshForm = state.$root.find('#q-ssh-pol-form');
+    var sshEditing = $sshForm.length && $sshForm[0].contains(document.activeElement);
+    if (!sshEditing) {
+      $('#q-ssh-pwauth-chk').checkbox(ssh.passwordAuth ? 'set checked' : 'set unchecked');
+      $('#q-ssh-root-chk').checkbox(ssh.allowRootLogin ? 'set checked' : 'set unchecked');
+      $('#q-ssh-timeout').val(ssh.idleTimeout !== undefined ? ssh.idleTimeout : 300);
+    }
 
     var keys = ssh.sshKeys || [];
     var keyRows = keys
@@ -135,8 +139,8 @@
           '<tr>' +
           '  <td><span class="ui label ' + ownerCls + ' q-badge-square q-mono">' + esc(k.owner) + '</span></td>' +
           '  <td><strong class="q-mono">' + esc(k.label) + '</strong><span class="q-rule-desc q-mono">' + esc(k.type) + '</span></td>' +
-          '  <td><div class="q-key-copy-row"><span class="q-mono q-text-secondary">' + esc(shortBody) + '</span><button type="button" class="ui mini icon button q-btn-ghost" data-q-copy="' + esc(k.publicKey) + '" data-q-copy-label="SSH public key" title="Copy full public key"><i data-lucide="copy" class="q-icon q-icon-sm"></i></button></div></td>' +
-          '  <td><button type="button" class="ui mini icon button q-btn-ghost q-ssh-del-btn" data-owner="' + esc(k.owner) + '" data-index="' + k.index + '" title="Revoke SSH key"><i data-lucide="trash-2" class="q-icon q-icon-sm q-text-danger"></i></button></td>' +
+          '  <td><div class="q-key-copy-row"><span class="q-mono q-text-secondary">' + esc(shortBody) + '</span><button type="button" class="ui mini icon button q-btn-ghost" data-q-copy="' + esc(k.publicKey) + '" data-q-copy-label="SSH public key" title="Copy full public key" aria-label="Copy SSH public key ' + esc(k.label) + '"><i data-lucide="copy" class="q-icon q-icon-sm"></i></button></div></td>' +
+          '  <td><button type="button" class="ui mini icon button q-btn-ghost q-ssh-del-btn" data-owner="' + esc(k.owner) + '" data-index="' + k.index + '" data-label="' + esc(k.label) + '" title="Revoke SSH key" aria-label="Revoke SSH key ' + esc(k.label) + '"><i data-lucide="trash-2" class="q-icon q-icon-sm q-text-danger"></i></button></td>' +
           '</tr>'
         );
       })
@@ -307,6 +311,10 @@
         })
         .then(function () {
           $('#q-wpw-cur, #q-wpw-new, #q-wpw-cfm').val('');
+          if (Hive.auth && typeof Hive.auth.clearMustChangePassword === 'function') {
+            Hive.auth.clearMustChangePassword();
+          }
+          $('#q-notif-dot').attr('hidden', true);
           Hive.ui.notify({ title: 'Password Updated', message: 'Administrator password updated cleanly.', type: 'success' });
         })
         .catch(function (err) {
@@ -367,15 +375,24 @@
     $container.on('click.qAccess', '.q-ssh-del-btn', function () {
       var owner = $(this).attr('data-owner');
       var idx = Number($(this).attr('data-index'));
-      Hive.services.access
-        .deleteSshKey(owner, idx)
-        .then(function () {
-          Hive.ui.notify({ title: 'SSH Key Revoked', message: 'Removed key from ' + owner + ' authorized_keys.', type: 'warning' });
-          loadAndRender();
-        })
-        .catch(function (err) {
-          Hive.ui.notify({ title: 'Cannot Revoke Key', message: err.message || 'Anti-lockout check prevented removal.', type: 'error', displayTime: 4500 });
-        });
+      var keyLbl = $(this).attr('data-label') || ('key #' + (idx + 1));
+      Hive.ui.confirm({
+        title: 'Revoke Authorized SSH Key?',
+        message: 'Remove "' + keyLbl + '" from ' + owner + ' authorized_keys immediately?',
+        confirmText: 'Revoke Key',
+        danger: true,
+        onConfirm: function () {
+          Hive.services.access
+            .deleteSshKey(owner, idx)
+            .then(function () {
+              Hive.ui.notify({ title: 'SSH Key Revoked', message: 'Removed key from ' + owner + ' authorized_keys.', type: 'warning' });
+              loadAndRender();
+            })
+            .catch(function (err) {
+              Hive.ui.notify({ title: 'Cannot Revoke Key', message: err.message || 'Anti-lockout check prevented removal.', type: 'error', displayTime: 4500 });
+            });
+        }
+      });
     });
 
     // TLS Certificate Upload & Reset
@@ -406,15 +423,23 @@
     });
 
     $container.on('click.qAccess', '#q-tls-reset-btn', function () {
-      Hive.services.access
-        .deleteTls()
-        .then(function () {
-          Hive.ui.notify({ title: 'Custom TLS Removed', message: 'Reverted to automatic self-signed ECDSA certificate.', type: 'info' });
-          loadAndRender();
-        })
-        .catch(function (err) {
-          Hive.ui.notify({ title: 'TLS Reset Error', message: err.message || 'Could not reset certificate.', type: 'error' });
-        });
+      Hive.ui.confirm({
+        title: 'Revert Custom TLS Certificate?',
+        message: 'Delete the custom X.509 certificate and regenerate NetBee OS automatic self-signed ECDSA certificate?',
+        confirmText: 'Revert Certificate',
+        danger: true,
+        onConfirm: function () {
+          Hive.services.access
+            .deleteTls()
+            .then(function () {
+              Hive.ui.notify({ title: 'Custom TLS Removed', message: 'Reverted to automatic self-signed ECDSA certificate.', type: 'info' });
+              loadAndRender();
+            })
+            .catch(function (err) {
+              Hive.ui.notify({ title: 'TLS Reset Error', message: err.message || 'Could not reset certificate.', type: 'error' });
+            });
+        }
+      });
     });
 
     // Modal Handlers
@@ -476,8 +501,9 @@
 
     state.stateListener = function (e) {
       var reason = e && e.detail ? e.detail.reason : '';
-      if (reason === 'telemetry' || reason === 'inline-toggle' || reason === 'audit' || reason === 'flows-tick') return;
-      loadAndRender();
+      if (Hive.store.isRuntimeOnlyReason(reason) || reason === 'inline-toggle') return;
+      state.access = JSON.parse(JSON.stringify(Hive.store.getState().access));
+      renderTables();
     };
     window.addEventListener('hive:statechange', state.stateListener);
   }

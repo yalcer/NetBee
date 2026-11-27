@@ -35,18 +35,6 @@
     });
   }
 
-  function downloadBlob(content, mime, filename) {
-    var blob = new Blob([content], { type: mime });
-    var url = URL.createObjectURL(blob);
-    var a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-  }
-
   function refreshProcessDropdown() {
     if (!state.$root) return;
     var esc = Hive.format.escapeHtml;
@@ -92,7 +80,7 @@
       .map(function (r) {
         var s = sevMap[r.severity] || sevMap.info;
         return (
-          '<tr class="q-audit-row-clickable" data-id="' + esc(r.id) + '">' +
+          '<tr class="q-audit-row-clickable" tabindex="0" role="button" data-id="' + esc(r.id) + '">' +
           '  <td class="q-mono q-text-secondary" style="white-space:nowrap;">' + esc(r.timestamp) + '</td>' +
           '  <td><span class="ui label ' + s.cls + '"><span class="q-status-dot ' + s.dot + '"></span>' + esc(r.severity) + '</span></td>' +
           '  <td><span class="ui label q-badge-square q-mono">' + esc(r.module) + '</span></td>' +
@@ -234,25 +222,45 @@
     });
 
     $container.on('click.qSvcLogs', '#q-slog-clear-btn', function () {
-      Hive.services.logs.clear().then(function () {
-        Hive.ui.notify({ title: 'RAM Syslog Cleared', message: 'Truncated /var/log/messages.', type: 'warning' });
-        loadAndRender();
+      Hive.ui.confirm({
+        title: 'Clear All System Logs?',
+        message: 'Truncate /var/log/messages in RAM? Previous syslog lines will be permanently discarded.',
+        confirmText: 'Clear Logs',
+        danger: true,
+        onConfirm: function () {
+          Hive.services.logs.clear().then(function () {
+            Hive.ui.notify({ title: 'RAM Syslog Cleared', message: 'Truncated /var/log/messages.', type: 'warning' });
+            loadAndRender();
+          });
+        }
       });
+    });
+
+    $container.on('click.qSvcLogs', '.q-slog-view-btn', function (e) {
+      e.stopPropagation();
+      openDetailModal($(this).attr('data-id'));
     });
 
     $container.on('click.qSvcLogs', '.q-audit-row-clickable', function () {
       openDetailModal($(this).attr('data-id'));
     });
 
+    $container.on('keydown.qSvcLogs', '.q-audit-row-clickable', function (e) {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        openDetailModal($(this).attr('data-id'));
+      }
+    });
+
     $container.on('click.qSvcLogs', '#q-slog-export-csv', function () {
       var rows = getFiltered();
-      downloadBlob(Hive.services.logs.toServiceCsv(rows), 'text/csv;charset=utf-8', 'netbee-syslog.csv');
+      Hive.ui.downloadBlob('netbee-syslog.csv', Hive.services.logs.toServiceCsv(rows), 'text/csv;charset=utf-8');
       Hive.ui.notify({ title: 'Syslog Exported', message: 'Downloaded ' + rows.length + ' lines as CSV.', type: 'success' });
     });
 
     state.stateListener = function (e) {
       var reason = e && e.detail ? e.detail.reason : '';
-      if (reason === 'telemetry' || reason === 'flows-tick' || reason === 'kernel-log' || reason === 'syslog-refresh') return;
+      if (Hive.store.isRuntimeOnlyReason(reason)) return;
       loadAndRender();
     };
     window.addEventListener('hive:statechange', state.stateListener);

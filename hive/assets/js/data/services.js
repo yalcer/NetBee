@@ -66,26 +66,39 @@
   function parseAdGuardUserRules(rulesArr) {
     var blocked = [];
     var allowlist = [];
+    var passthrough = [];
     (rulesArr || []).forEach(function (raw, idx) {
       var line = String(raw || '').trim();
-      if (!line || line.charAt(0) === '!' || line.charAt(0) === '#') return;
+      if (!line) return;
+      if (line.charAt(0) === '!' || line.charAt(0) === '#') {
+        passthrough.push(line);
+        return;
+      }
       if (line.indexOf('@@||') === 0) {
-        var domA = line.slice(4).replace(/\^.*$/, '').trim();
+        var restA = line.slice(4);
+        var caretA = restA.indexOf('^');
+        var domA = (caretA !== -1 ? restA.slice(0, caretA) : restA).trim();
+        var modA = caretA !== -1 ? restA.slice(caretA + 1).trim() : '';
         if (domA) {
           allowlist.push({
-            id: 'alw-' + domA.replace(/[^a-zA-Z0-9.-]/g, '_'),
+            id: 'alw-' + idx + '-' + domA.replace(/[^a-zA-Z0-9.-]/g, '_'),
             domain: domA,
-            reason: 'AdGuard exception rule',
+            rawRule: line,
+            reason: modA ? ('AdGuard exception (' + modA + ')') : 'AdGuard exception rule',
             addedAt: 'Active'
           });
         }
       } else if (line.indexOf('||') === 0) {
-        var domB = line.slice(2).replace(/\^.*$/, '').trim();
+        var restB = line.slice(2);
+        var caretB = restB.indexOf('^');
+        var domB = (caretB !== -1 ? restB.slice(0, caretB) : restB).trim();
+        var modB = caretB !== -1 ? restB.slice(caretB + 1).trim() : '';
         if (domB) {
           blocked.push({
-            id: 'blk-' + domB.replace(/[^a-zA-Z0-9.-]/g, '_'),
+            id: 'blk-' + idx + '-' + domB.replace(/[^a-zA-Z0-9.-]/g, '_'),
             domain: domB,
-            reason: 'AdGuard custom block rule',
+            rawRule: line,
+            reason: modB ? ('AdGuard block (' + modB + ')') : 'AdGuard custom block rule',
             addedAt: 'Active'
           });
         }
@@ -93,20 +106,23 @@
         blocked.push({
           id: 'raw-' + idx,
           domain: line,
+          rawRule: line,
           reason: 'Custom filter rule',
           addedAt: 'Active'
         });
       }
     });
-    return { blocked: blocked, allowlist: allowlist };
+    return { blocked: blocked, allowlist: allowlist, passthrough: passthrough };
   }
 
-  function buildAdGuardUserRules(blockedList, allowList) {
-    var out = [];
+  function buildAdGuardUserRules(blockedList, allowList, passthroughList) {
+    var out = Array.isArray(passthroughList) ? passthroughList.slice() : [];
     (blockedList || []).forEach(function (item) {
       var d = String(item.domain || '').trim();
       if (!d) return;
-      if (d.indexOf('||') === 0 || d.indexOf('@@') === 0 || d.indexOf('/') !== -1) {
+      if (item.rawRule && item.rawRule.indexOf(d) !== -1) {
+        out.push(item.rawRule);
+      } else if (d.indexOf('||') === 0 || d.indexOf('@@') === 0 || d.indexOf('/') !== -1) {
         out.push(d);
       } else {
         out.push('||' + d.replace(/^\*\./, '') + '^');
@@ -115,7 +131,9 @@
     (allowList || []).forEach(function (item) {
       var d = String(item.domain || '').trim();
       if (!d) return;
-      if (d.indexOf('@@') === 0) {
+      if (item.rawRule && item.rawRule.indexOf(d) !== -1) {
+        out.push(item.rawRule);
+      } else if (d.indexOf('@@') === 0) {
         out.push(d);
       } else {
         out.push('@@||' + d.replace(/^\*\./, '') + '^');
@@ -233,7 +251,24 @@
     };
   }
 
-  function mapRuleFromBackend(r, lanIf, wanIf, wgIf) {
+  function reverseMatchAlias(spec, expectedType, aliases) {
+    var raw = String(spec || '').trim();
+    if (!raw || !aliases) return raw || 'any';
+    var norm = raw.split(',').map(function (s) { return s.trim(); }).filter(Boolean).join(',');
+    var keys = Object.keys(aliases);
+    for (var i = 0; i < keys.length; i++) {
+      var name = keys[i];
+      var a = aliases[name];
+      if (!a || !Array.isArray(a.members) || !a.members.length) continue;
+      if (expectedType === 'port' && a.type !== 'port') continue;
+      if (expectedType !== 'port' && a.type === 'port') continue;
+      var joined = a.members.map(function (m) { return String(m).trim(); }).filter(Boolean).join(',');
+      if (joined === norm) return name;
+    }
+    return norm || 'any';
+  }
+
+  function mapRuleFromBackend(r, lanIf, wanIf, wgIf, aliases) {
     var actionMap = { accept: 'pass', drop: 'block', reject: 'reject' };
     var zone = 'wan';
     if (r.in_iface === lanIf) zone = 'lan';
@@ -249,9 +284,9 @@
       direction: r.chain || 'input',
       action: actionMap[r.action] || 'block',
       protocol: String(r.protocol || 'any').toUpperCase(),
-      source: r.src_addr || 'any',
-      destination: r.dst_addr || 'any',
-      port: r.dst_port || 'any',
+      source: r.src_addr ? reverseMatchAlias(r.src_addr, 'addr', aliases) : 'any',
+      destination: r.dst_addr ? reverseMatchAlias(r.dst_addr, 'addr', aliases) : 'any',
+      port: r.dst_port ? reverseMatchAlias(r.dst_port, 'port', aliases) : 'any',
       log: Boolean(r.log),
       enabled: Boolean(r.enabled),
       hits: 0,
@@ -259,20 +294,20 @@
     };
   }
 
-  function resolveAliasSingle(val, aliases) {
+  function resolveAliasSpec(val, aliases) {
     var s = String(val || '').trim();
     if (!s || s.toLowerCase() === 'any' || s === '*') return '';
     if (aliases && aliases[s] && Array.isArray(aliases[s].members) && aliases[s].members.length) {
-      return String(aliases[s].members[0]).trim();
+      return aliases[s].members.map(function (m) { return String(m).trim(); }).filter(Boolean).join(',');
     }
-    return s;
+    return s.split(',').map(function (p) { return p.trim(); }).filter(Boolean).join(',');
   }
 
   function mapRuleToBackend(r, aliases) {
     var actionMap = { pass: 'accept', accept: 'accept', block: 'drop', drop: 'drop', reject: 'reject' };
     var proto = String(r.protocol || 'any').toLowerCase();
     var chain = r.chain === 'forward' || r.direction === 'forward' ? 'forward' : 'input';
-    var dstPort = resolveAliasSingle(r.port, aliases);
+    var dstPort = resolveAliasSpec(r.port, aliases);
     if (proto !== 'tcp' && proto !== 'udp') dstPort = '';
 
     return {
@@ -284,8 +319,8 @@
       protocol: proto,
       in_iface: String(r.inIface || '').trim(),
       out_iface: chain === 'forward' ? String(r.outIface || '').trim() : '',
-      src_addr: resolveAliasSingle(r.source, aliases),
-      dst_addr: resolveAliasSingle(r.destination, aliases),
+      src_addr: resolveAliasSpec(r.source, aliases),
+      dst_addr: resolveAliasSpec(r.destination, aliases),
       dst_port: dstPort,
       log: Boolean(r.log)
     };
@@ -402,18 +437,29 @@
           st.lanConfig = {
             interface: lanIf,
             ip: lanRes.ip || '192.168.10.1',
-            netmask: lanRes.netmask || '255.255.255.0'
+            netmask: lanRes.netmask || '255.255.255.0',
+            mtu: Number(lanRes.mtu || 1500),
+            pinMac: lanRes.pin_mac || ''
           };
         }
         if (wanRes && wanRes.config) {
+          var wanMode = wanCfg.mode || 'dhcp';
+          var isPppMode = wanMode === 'pppoe' || wanMode === 'ont_vlan';
           st.wanConfig = {
-            mode: wanCfg.mode || 'dhcp',
+            mode: wanMode,
             interface: wanIf,
+            vlanEnabled: Boolean(wanCfg.vlan_enabled || wanMode === 'ont_vlan'),
             vlanId: Number(wanCfg.vlan_id || 35),
+            staticIp: wanCfg.static_ip || '',
+            staticNetmask: wanCfg.static_netmask || '255.255.255.0',
+            staticGateway: wanCfg.static_gateway || '',
             pppoeUser: wanCfg.pppoe_user || '',
             pppoePassword: '',
+            peerDns: wanCfg.peerdns === undefined || wanCfg.peerdns === null ? true : Boolean(wanCfg.peerdns),
+            dnsServers: Array.isArray(wanCfg.dns_servers) ? wanCfg.dns_servers.slice() : [],
             macClone: wanCfg.mac_clone || '',
-            mtu: Number(wanCfg.mtu || (wanCfg.mode === 'dhcp' ? 1500 : 1492)),
+            pinMac: wanCfg.pin_mac || '',
+            mtu: Number(wanCfg.mtu || (isPppMode ? 1492 : 1500)),
             ipv6Pd: Boolean(wanCfg.ipv6_pd),
             pppdRunning: Boolean(wanRes.pppd_running)
           };
@@ -474,6 +520,7 @@
         // 3. Routes & Upstream Gateway Detection
         var defaultGw = '';
         var defaultGwDev = wanIf;
+        var defaultGwMetric = 100;
         if (routesRes) {
           var v4List = Array.isArray(routesRes.ipv4) ? routesRes.ipv4 : [];
           var conn = [];
@@ -481,6 +528,7 @@
             if (r.dst === 'default' && r.gateway) {
               defaultGw = r.gateway;
               defaultGwDev = r.dev || wanIf;
+              defaultGwMetric = Number(r.metric !== undefined ? r.metric : 100);
             } else if (r.dst && r.dst !== 'default' && (!r.gateway || r.protocol === 'kernel')) {
               conn.push({
                 id: 'conn-' + idx,
@@ -534,12 +582,13 @@
             var isLan = dev === lanIf;
             var isWan = dev === wanIf || dev === 'ppp0' || dev.indexOf(wanIf + '.') === 0;
             var isWg = dev === wgIf || dev.indexOf('wg') === 0;
-            var zone = isLan ? 'lan' : isWan ? 'wan' : isWg ? 'vpn' : 'vlan';
+            var zone = isLan ? 'lan' : isWan ? 'wan' : isWg ? 'vpn' : 'unassigned';
             var type = isWg ? 'wireguard' : dev === 'ppp0' ? 'pppoe' : dev.indexOf('.') !== -1 ? 'vlan' : 'physical';
 
             var ipv4Str = v4 ? (v4.local + '/' + v4.prefixlen) : (isLan ? st.lanConfig.ip + '/' + netmaskToPrefix(st.lanConfig.netmask) : '—');
             var ipv6Str = v6 ? (v6.local + '/' + v6.prefixlen) : '—';
-            var operUp = String(raw.operstate || '').toUpperCase() === 'UP' || raw.link_detected === true || (Array.isArray(raw.flags) && raw.flags.indexOf('UP') !== -1 && Boolean(v4));
+            var hasUpFlag = Array.isArray(raw.flags) && raw.flags.indexOf('UP') !== -1;
+            var operUp = String(raw.operstate || '').toUpperCase() === 'UP' || raw.link_detected === true || (hasUpFlag && Boolean(v4));
 
             var stats = raw.stats64 || {};
             var rxB = (stats.rx && stats.rx.bytes) || 0;
@@ -547,21 +596,45 @@
 
             var prev = (st.interfaces || []).find(function (p) { return p.device === dev; });
 
-            var modeLabel = 'Static';
+            var wanHasVlan = Boolean(st.wanConfig.vlanEnabled || st.wanConfig.mode === 'ont_vlan');
+            var modeLabel = isLan ? 'Static' : 'Unassigned';
             if (dev === wanIf) {
-              modeLabel = st.wanConfig.mode === 'pppoe' ? 'PPPoE' : st.wanConfig.mode === 'ont_vlan' ? 'ONT VLAN + PPPoE' : 'DHCP';
+              if (st.wanConfig.mode === 'pppoe' || st.wanConfig.mode === 'ont_vlan') {
+                modeLabel = wanHasVlan ? ('VLAN ' + st.wanConfig.vlanId + ' + PPPoE') : 'PPPoE';
+              } else if (st.wanConfig.mode === 'static') {
+                modeLabel = wanHasVlan ? ('VLAN ' + st.wanConfig.vlanId + ' + Static') : 'Static WAN';
+              } else {
+                modeLabel = wanHasVlan ? ('VLAN ' + st.wanConfig.vlanId + ' + DHCP') : 'DHCP';
+              }
             } else if (dev === 'ppp0') {
               modeLabel = 'PPPoE Session';
+            } else if (type === 'vlan' && isWan) {
+              modeLabel = '802.1Q VLAN ' + st.wanConfig.vlanId;
             } else if (isWg) {
               modeLabel = 'WireGuard';
             }
+
+            var defaultLabel = isLan
+              ? 'LAN Interface'
+              : dev === wanIf
+                ? 'WAN Interface'
+                : dev === 'ppp0'
+                  ? 'WAN PPPoE Tunnel'
+                  : type === 'vlan' && isWan
+                    ? 'WAN 802.1Q Subinterface'
+                    : isWg
+                      ? 'WireGuard VPN'
+                      : 'Spare NIC';
 
             mappedIfs.push({
               id: 'if-' + dev,
               device: dev,
               type: type,
+              role: raw.role || (isLan ? 'lan' : isWan ? 'wan' : isWg ? 'vpn' : 'unassigned'),
+              driver: raw.driver || '',
+              customLabel: raw.custom_label || '',
               removable: false,
-              label: isLan ? 'LAN Interface' : dev === wanIf ? 'WAN Interface' : dev === 'ppp0' ? 'WAN PPPoE Tunnel' : isWg ? 'WireGuard VPN' : dev,
+              label: raw.custom_label || defaultLabel,
               zone: zone,
               mode: modeLabel,
               ipv4: ipv4Str,
@@ -572,7 +645,8 @@
               speed: raw.speed ? (raw.speed + (raw.duplex ? ' ' + raw.duplex : '')) : (isWg ? 'UDP/' + (wgCfg.listen_port || 51820) : 'Virtual'),
               duplex: raw.duplex || '',
               linkDetected: Boolean(raw.link_detected),
-              enabled: true,
+              adminUp: hasUpFlag,
+              enabled: hasUpFlag,
               status: operUp ? 'up' : 'down',
               rxMbps: prev ? prev.rxMbps : 0,
               txMbps: prev ? prev.txMbps : 0,
@@ -597,6 +671,7 @@
             monitorIp: defaultGw || '1.1.1.1',
             rttMs: 0,
             lossPercent: 0,
+            metric: defaultGwMetric,
             tier: 1,
             weight: 1,
             status: defaultGw || (wanIfaceEntry && wanIfaceEntry.status === 'up' && wanIfaceEntry.ipv4 !== '—') ? 'online' : 'offline',
@@ -621,7 +696,7 @@
           };
           st.adblock.forceDns = Boolean(fc.transparent_dns);
           st.firewallRules = (fc.custom_rules || []).map(function (r) {
-            return mapRuleFromBackend(r, lanIf, wanIf, wgIf);
+            return mapRuleFromBackend(r, lanIf, wanIf, wgIf, st.aliases);
           });
           st.nat.wanIface = wanIf;
           st.nat.portForwards = (fc.port_forwards || []).map(function (pf) {
@@ -824,13 +899,17 @@
         }
 
         if (Array.isArray(dnsRewRes)) {
+          var vRef = Hive.validators;
           st.dns.overrides = dnsRewRes.map(function (rw) {
-            var key = (rw.domain || '') + '|' + (rw.answer || '');
+            var dom = String(rw.domain || '').trim().replace(/\.$/, '');
+            var ans = String(rw.answer || '').trim().replace(/\.$/, '');
+            var key = dom + '|' + ans;
+            var recType = vRef && vRef.isIPv6(ans) ? 'AAAA' : (vRef && vRef.isIPv4(ans) ? 'A' : 'CNAME');
             return {
               id: 'rw-' + key,
-              hostname: rw.domain || '',
-              type: String(rw.answer || '').indexOf(':') !== -1 ? 'AAAA' : 'A',
-              value: rw.answer || '',
+              hostname: dom,
+              type: recType,
+              value: ans,
               ttl: 300,
               description: 'AdGuard DNS Rewrite'
             };
@@ -853,6 +932,12 @@
         }
 
         if (dnsFiltRes) {
+          var filtEn = dnsFiltRes.enabled !== false;
+          st.adblock.filteringEnabled = filtEn;
+          st.adblock.filteringInterval = Number(dnsFiltRes.interval || 24);
+          if (dnsStatRes) {
+            st.adblock.enabled = Boolean(dnsStatRes.protection_enabled) && filtEn;
+          }
           st.adblock.feeds = (dnsFiltRes.filters || []).map(function (f) {
             return {
               id: 'feed-' + f.id,
@@ -869,6 +954,7 @@
           var parsedRules = parseAdGuardUserRules(dnsFiltRes.user_rules || []);
           st.adblock.customBlocked = parsedRules.blocked;
           st.adblock.allowlist = parsedRules.allowlist;
+          st.adblock.passthroughRules = parsedRules.passthrough || [];
         }
 
         if (blkCurRes) {
@@ -876,6 +962,9 @@
             st.adblock.blockedServices = blkCurRes.slice().sort();
           } else if (Array.isArray(blkCurRes.ids)) {
             st.adblock.blockedServices = blkCurRes.ids.slice().sort();
+            if (blkCurRes.schedule && typeof blkCurRes.schedule === 'object') {
+              st.adblock.blockedServicesSchedule = clone(blkCurRes.schedule);
+            }
           }
         }
         if (blkAllRes && Array.isArray(blkAllRes.blocked_services)) {
@@ -909,13 +998,48 @@
     }
 
     function capturePending(resp) {
-      if (resp && resp.pending_commit && resp.pending_commit.pending) {
+      if (resp && resp.pending_commit && (resp.pending_commit.active || resp.pending_commit.pending)) {
         latestPendingCommit = resp.pending_commit;
+        window.dispatchEvent(new CustomEvent('hive:pendingcommit', { detail: resp.pending_commit }));
       }
       if (resp && resp.new_url) {
         newLanUrl = resp.new_url;
       }
       return resp;
+    }
+
+    function buildWanPayload(wc) {
+      var isPpp = wc.mode === 'pppoe' || wc.mode === 'ont_vlan';
+      var payload = {
+        mode: wc.mode,
+        interface: wc.interface || 'eth1',
+        vlan_enabled: Boolean(wc.vlanEnabled || wc.mode === 'ont_vlan'),
+        vlan_id: Number(wc.vlanId || 35),
+        static_ip: wc.staticIp || '',
+        static_netmask: wc.staticNetmask || '',
+        static_gateway: wc.staticGateway || '',
+        pppoe_user: wc.pppoeUser || '',
+        peerdns: wc.peerDns !== false,
+        dns_servers: Array.isArray(wc.dnsServers) ? wc.dnsServers : [],
+        mac_clone: wc.macClone || '',
+        pin_mac: wc.pinMac || '',
+        mtu: Number(wc.mtu || (isPpp ? 1492 : 1500)),
+        ipv6_pd: Boolean(wc.ipv6Pd)
+      };
+      if (wc.pppoePassword) {
+        payload.pppoe_password = wc.pppoePassword;
+      }
+      return payload;
+    }
+
+    function buildLanPayload(lc) {
+      return {
+        interface: lc.interface || 'eth0',
+        ip: lc.ip,
+        netmask: lc.netmask,
+        mtu: Number(lc.mtu || 1500),
+        pin_mac: lc.pinMac || ''
+      };
     }
 
     // 1. Hostname, Timezone, NTP
@@ -944,22 +1068,19 @@
       });
     }
 
-    // 2. WAN, IPv6 & LAN
-    if (JSON.stringify(base.wanConfig) !== JSON.stringify(next.wanConfig)) {
+    // 2. WAN & IPv6 (LAN / Role Swap runs last so AdGuardHome & firewall mutations commit before LAN IP moves!)
+    var wanChanged = JSON.stringify(base.wanConfig) !== JSON.stringify(next.wanConfig);
+    var lanChanged = JSON.stringify(base.lanConfig) !== JSON.stringify(next.lanConfig);
+    var portsCrossed =
+      (lanChanged || wanChanged) &&
+      (next.lanConfig.interface === base.wanConfig.interface || next.wanConfig.interface === base.lanConfig.interface);
+
+    if (!portsCrossed && wanChanged) {
       enqueue(function () {
-        var payload = {
-          mode: next.wanConfig.mode,
-          interface: next.wanConfig.interface || 'eth1',
-          vlan_id: Number(next.wanConfig.vlanId || 35),
-          pppoe_user: next.wanConfig.pppoeUser || '',
-          mac_clone: next.wanConfig.macClone || '',
-          mtu: Number(next.wanConfig.mtu || (next.wanConfig.mode === 'dhcp' ? 1500 : 1492)),
-          ipv6_pd: Boolean(next.wanConfig.ipv6Pd)
-        };
-        if (next.wanConfig.pppoePassword) {
-          payload.pppoe_password = next.wanConfig.pppoePassword;
-        }
-        return Hive.api.request('/network/wan', { method: 'PUT', body: payload }).then(capturePending);
+        return Hive.api.request('/network/wan', {
+          method: 'PUT',
+          body: buildWanPayload(next.wanConfig)
+        }).then(capturePending);
       });
     }
 
@@ -972,19 +1093,6 @@
             ipv6_pd: Boolean(next.ipv6Config.ipv6Pd)
           }
         });
-      });
-    }
-
-    if (JSON.stringify(base.lanConfig) !== JSON.stringify(next.lanConfig)) {
-      enqueue(function () {
-        return Hive.api.request('/network/lan', {
-          method: 'PUT',
-          body: {
-            interface: next.lanConfig.interface || 'eth0',
-            ip: next.lanConfig.ip,
-            netmask: next.lanConfig.netmask
-          }
-        }).then(capturePending);
       });
     }
 
@@ -1166,23 +1274,34 @@
       }
     });
 
-    // 8. Ad/Tracker Block (Protection, Feeds, Rules, Blocked Services)
-    if (base.adblock.enabled !== next.adblock.enabled) {
+    // 8. Ad/Tracker Block (Protection, Filtering Engine, Feeds, Rules, Blocked Services)
+    if (base.adblock.enabled !== next.adblock.enabled || (next.adblock.enabled && next.adblock.filteringEnabled === false)) {
       enqueue(function () {
-        return Hive.api.request('/dns/protection', {
-          method: 'POST',
-          body: { enabled: Boolean(next.adblock.enabled) }
-        });
+        var wantEn = Boolean(next.adblock.enabled);
+        return Hive.api
+          .request('/dns/protection', {
+            method: 'POST',
+            body: { enabled: wantEn }
+          })
+          .then(function () {
+            return Hive.api.request('/dns/filtering/config', {
+              method: 'POST',
+              body: {
+                enabled: wantEn,
+                interval: Number(next.adblock.filteringInterval || 24)
+              }
+            });
+          });
       });
     }
 
-    var baseFeedMap = {};
-    var nextFeedMap = {};
-    (base.adblock.feeds || []).forEach(function (f) { baseFeedMap[f.url] = f; });
-    (next.adblock.feeds || []).forEach(function (f) { nextFeedMap[f.url] = f; });
+    var baseFeedById = {};
+    var nextFeedById = {};
+    (base.adblock.feeds || []).forEach(function (f) { baseFeedById[f.id] = f; });
+    (next.adblock.feeds || []).forEach(function (f) { nextFeedById[f.id] = f; });
 
     (base.adblock.feeds || []).forEach(function (f) {
-      if (!nextFeedMap[f.url]) {
+      if (!nextFeedById[f.id]) {
         enqueue(function () {
           return Hive.api.request('/dns/filters', {
             method: 'DELETE',
@@ -1192,19 +1311,29 @@
       }
     });
     (next.adblock.feeds || []).forEach(function (f) {
-      var prevF = baseFeedMap[f.url];
+      var prevF = baseFeedById[f.id];
       if (!prevF) {
         enqueue(function () {
-          return Hive.api.request('/dns/filters', {
-            method: 'POST',
-            body: { name: f.name, url: f.url, whitelist: false }
-          });
+          return Hive.api
+            .request('/dns/filters', {
+              method: 'POST',
+              body: { name: f.name, url: f.url, whitelist: false }
+            })
+            .then(function (addRes) {
+              if (!f.enabled) {
+                return Hive.api.request('/dns/filters', {
+                  method: 'PUT',
+                  body: { url: f.url, data: { name: f.name, url: f.url, enabled: false }, whitelist: false }
+                });
+              }
+              return addRes;
+            });
         });
-      } else if (prevF.enabled !== f.enabled || prevF.name !== f.name) {
+      } else if (prevF.enabled !== f.enabled || prevF.name !== f.name || prevF.url !== f.url) {
         enqueue(function () {
           return Hive.api.request('/dns/filters', {
             method: 'PUT',
-            body: { url: f.url, data: { name: f.name, url: f.url, enabled: Boolean(f.enabled) }, whitelist: false }
+            body: { url: prevF.url, data: { name: f.name, url: f.url, enabled: Boolean(f.enabled) }, whitelist: false }
           });
         });
       }
@@ -1217,7 +1346,7 @@
       enqueue(function () {
         return Hive.api.request('/dns/rules', {
           method: 'PUT',
-          body: { rules: buildAdGuardUserRules(next.adblock.customBlocked, next.adblock.allowlist) }
+          body: { rules: buildAdGuardUserRules(next.adblock.customBlocked, next.adblock.allowlist, next.adblock.passthroughRules) }
         });
       });
     }
@@ -1226,7 +1355,10 @@
       enqueue(function () {
         return Hive.api.request('/dns/blocked-services', {
           method: 'PUT',
-          body: next.adblock.blockedServices || []
+          body: {
+            ids: next.adblock.blockedServices || [],
+            schedule: next.adblock.blockedServicesSchedule || { time_zone: 'Local' }
+          }
         });
       });
     }
@@ -1292,6 +1424,26 @@
             idle_timeout: Number(next.access.ssh.idleTimeout || 0)
           }
         });
+      });
+    }
+
+    // 11. LAN IP / Port Assignment or Atomic LAN <-> WAN Swap (runs last so AdGuardHome & firewall updates commit before LAN IP moves)
+    if (portsCrossed) {
+      enqueue(function () {
+        return Hive.api.request('/network/swap', {
+          method: 'POST',
+          body: {
+            lan: buildLanPayload(next.lanConfig),
+            wan: buildWanPayload(next.wanConfig)
+          }
+        }).then(capturePending);
+      });
+    } else if (lanChanged) {
+      enqueue(function () {
+        return Hive.api.request('/network/lan', {
+          method: 'PUT',
+          body: buildLanPayload(next.lanConfig)
+        }).then(capturePending);
       });
     }
 
@@ -1413,12 +1565,30 @@
       stageLan: function (patch) {
         var parsed = parseCidrOrIpMask(patch.ipv4 || patch.ip, patch.netmask);
         Hive.store.stageMutation({ module: 'Interfaces' }, function (st) {
-          st.lanConfig.interface = patch.interface || st.lanConfig.interface || 'eth0';
+          var prevLanIf = st.lanConfig.interface || 'eth0';
+          var nextLanIf = patch.interface || prevLanIf;
+          if (nextLanIf === st.wanConfig.interface && prevLanIf !== nextLanIf) {
+            st.wanConfig.interface = prevLanIf;
+            st.wanConfig.pinMac = '';
+          }
+          st.lanConfig.interface = nextLanIf;
           st.lanConfig.ip = parsed.ip;
           st.lanConfig.netmask = patch.netmask || parsed.netmask;
+          st.lanConfig.mtu = Number(patch.mtu || st.lanConfig.mtu || 1500);
+          st.lanConfig.pinMac = patch.pinMac !== undefined ? patch.pinMac : (st.lanConfig.pinMac || '');
+          if (st.dhcp && st.dhcp.scopes && st.dhcp.scopes[0]) {
+            var sc = st.dhcp.scopes[0];
+            sc.iface = st.lanConfig.interface;
+            sc.gatewayIp = st.lanConfig.ip;
+            sc.subnetMask = st.lanConfig.netmask;
+            sc.dnsServer = st.lanConfig.ip;
+            sc.subnet = st.lanConfig.ip.split('.').slice(0, 3).join('.') + '.0/' + netmaskToPrefix(st.lanConfig.netmask);
+          }
           var item = st.interfaces.find(function (i) { return i.device === st.lanConfig.interface; });
           if (item) {
+            item.zone = 'lan';
             item.ipv4 = st.lanConfig.ip + '/' + netmaskToPrefix(st.lanConfig.netmask);
+            item.mtu = st.lanConfig.mtu;
           }
         });
         return Promise.resolve(true);
@@ -1426,15 +1596,29 @@
 
       stageWan: function (patch) {
         Hive.store.stageMutation({ module: 'Interfaces' }, function (st) {
+          var prevWanIf = st.wanConfig.interface || 'eth1';
+          var nextWanIf = patch.interface || prevWanIf;
+          if (nextWanIf === st.lanConfig.interface && prevWanIf !== nextWanIf) {
+            st.lanConfig.interface = prevWanIf;
+            st.lanConfig.pinMac = '';
+          }
           st.wanConfig.mode = patch.mode || 'dhcp';
-          st.wanConfig.interface = patch.interface || st.wanConfig.interface || 'eth1';
+          st.wanConfig.interface = nextWanIf;
+          st.wanConfig.vlanEnabled = Boolean(patch.vlanEnabled || st.wanConfig.mode === 'ont_vlan');
           st.wanConfig.vlanId = Number(patch.vlanId || 35);
+          st.wanConfig.staticIp = patch.staticIp || '';
+          st.wanConfig.staticNetmask = patch.staticNetmask || '255.255.255.0';
+          st.wanConfig.staticGateway = patch.staticGateway || '';
           st.wanConfig.pppoeUser = patch.pppoeUser || '';
           if (patch.pppoePassword !== undefined) {
             st.wanConfig.pppoePassword = patch.pppoePassword;
           }
+          st.wanConfig.peerDns = patch.peerDns !== false;
+          st.wanConfig.dnsServers = Array.isArray(patch.dnsServers) ? patch.dnsServers : [];
           st.wanConfig.macClone = patch.macClone || '';
-          st.wanConfig.mtu = Number(patch.mtu || (patch.mode === 'dhcp' ? 1500 : 1492));
+          st.wanConfig.pinMac = patch.pinMac !== undefined ? patch.pinMac : (st.wanConfig.pinMac || '');
+          var isPpp = st.wanConfig.mode === 'pppoe' || st.wanConfig.mode === 'ont_vlan';
+          st.wanConfig.mtu = Number(patch.mtu || (isPpp ? 1492 : 1500));
           st.wanConfig.ipv6Pd = Boolean(patch.ipv6Pd);
           st.ipv6Config.ipv6Pd = Boolean(patch.ipv6Pd);
           if (patch.radvdEnabled !== undefined) {
@@ -1442,11 +1626,42 @@
           }
           var item = st.interfaces.find(function (i) { return i.device === st.wanConfig.interface; });
           if (item) {
-            item.mode = st.wanConfig.mode === 'pppoe' ? 'PPPoE' : st.wanConfig.mode === 'ont_vlan' ? 'ONT VLAN + PPPoE' : 'DHCP';
+            item.zone = 'wan';
             item.mtu = st.wanConfig.mtu;
           }
         });
         return Promise.resolve(true);
+      },
+
+      swapRoles: function () {
+        return Hive.api.request('/network/swap', { method: 'POST', body: {} }).then(function (res) {
+          if (res && res.pending_commit && (res.pending_commit.active || res.pending_commit.pending)) {
+            window.dispatchEvent(new CustomEvent('hive:pendingcommit', { detail: res.pending_commit }));
+          }
+          return bootstrapAll().then(function () { return res; });
+        });
+      },
+
+      setLinkState: function (iface, up) {
+        return Hive.api
+          .request('/network/interfaces/' + encodeURIComponent(iface) + '/state', {
+            method: 'POST',
+            body: { up: Boolean(up) }
+          })
+          .then(function (res) {
+            return bootstrapAll().then(function () { return res; });
+          });
+      },
+
+      setLabel: function (iface, label) {
+        return Hive.api
+          .request('/network/interfaces/' + encodeURIComponent(iface) + '/label', {
+            method: 'PUT',
+            body: { label: String(label || '').trim() }
+          })
+          .then(function (res) {
+            return bootstrapAll().then(function () { return res; });
+          });
       },
 
       stageIpv6: function (patch) {
@@ -1560,30 +1775,32 @@
 
       lookupRoute: function (destIp) {
         var st = Hive.store.getState();
+        var v = Hive.validators;
+        var isV6 = v.isIPv6(destIp) && destIp.indexOf('/') === -1;
         var candidates = [];
         (st.connectedRoutes || []).forEach(function (c) {
-          if (Hive.validators.isCIDR(c.destination)) {
+          if (v.isCIDR(c.destination) || v.isIPv4(c.destination) || v.isIPv6(c.destination)) {
             candidates.push(Object.assign({}, c, { sourceType: 'Connected Kernel Route', enabled: true }));
           }
         });
         (st.staticRoutes || []).forEach(function (r) {
-          if (Hive.validators.isCIDR(r.destination)) {
+          if (v.isCIDR(r.destination) || v.isIPv4(r.destination) || v.isIPv6(r.destination)) {
             candidates.push(Object.assign({}, r, { sourceType: 'Static Route' }));
           }
         });
         var gw = st.system.gateways && st.system.gateways[0];
-        if (gw && gw.address && gw.address.indexOf('Awaiting') === -1) {
+        if (!isV6 && gw && gw.address && gw.address.indexOf('Awaiting') === -1) {
           candidates.push({
             id: gw.id,
             destination: '0.0.0.0/0',
             gateway: gw.address,
             iface: gw.iface,
-            metric: 100,
+            metric: gw.metric !== undefined ? gw.metric : 100,
             sourceType: 'Default WAN Gateway',
             enabled: true
           });
         }
-        return Promise.resolve(Hive.validators.findLongestPrefixRoute(destIp, candidates));
+        return Promise.resolve(v.findLongestPrefixRoute(destIp, candidates));
       }
     },
 
@@ -1674,12 +1891,16 @@
       saveDnsOverride: function (ov) {
         var isEdit = Boolean(ov.id);
         var id = ov.id || nextId('rw');
+        var vRef = Hive.validators;
+        var cleanHost = String(ov.hostname || '').trim().replace(/\.$/, '');
+        var cleanVal = String(ov.value || '').trim().replace(/\.$/, '');
+        var recType = vRef && vRef.isIPv6(cleanVal) ? 'AAAA' : (vRef && vRef.isIPv4(cleanVal) ? 'A' : 'CNAME');
         Hive.store.stageMutation({ module: 'DNS' }, function (state) {
           var item = {
             id: id,
-            hostname: ov.hostname,
-            type: String(ov.value || '').indexOf(':') !== -1 ? 'AAAA' : 'A',
-            value: ov.value,
+            hostname: cleanHost,
+            type: recType,
+            value: cleanVal,
             ttl: 300,
             description: ov.description || 'AdGuard DNS Rewrite'
           };
@@ -1828,16 +2049,20 @@
         });
       },
 
-      stageToggles: function (patch) {
-        Hive.store.stageMutation({ module: 'Firewall' }, function (st) {
-          if (patch.flowOffload !== undefined) st.firewallConfig.flowOffload = Boolean(patch.flowOffload);
-          if (patch.transparentDns !== undefined) {
-            st.firewallConfig.transparentDns = Boolean(patch.transparentDns);
-            st.adblock.forceDns = Boolean(patch.transparentDns);
-          }
-          if (patch.exposeWireguard !== undefined) st.firewallConfig.exposeWireguard = Boolean(patch.exposeWireguard);
-          if (patch.wireguardPort !== undefined) st.firewallConfig.wireguardPort = Number(patch.wireguardPort || 51820);
-        });
+      stageToggles: function (patch, options) {
+        Hive.store.stageMutation(
+          { module: 'Firewall' },
+          function (st) {
+            if (patch.flowOffload !== undefined) st.firewallConfig.flowOffload = Boolean(patch.flowOffload);
+            if (patch.transparentDns !== undefined) {
+              st.firewallConfig.transparentDns = Boolean(patch.transparentDns);
+              st.adblock.forceDns = Boolean(patch.transparentDns);
+            }
+            if (patch.exposeWireguard !== undefined) st.firewallConfig.exposeWireguard = Boolean(patch.exposeWireguard);
+            if (patch.wireguardPort !== undefined) st.firewallConfig.wireguardPort = Number(patch.wireguardPort || 51820);
+          },
+          options
+        );
         return Promise.resolve(true);
       },
 
@@ -1939,12 +2164,14 @@
         var dst = String(packet.destination || '').trim();
         var port = String(packet.port || '').trim();
         var inIface = String(packet.inIface || '').trim();
+        var outIface = String(packet.outIface || '').trim();
 
         var chainRules = st.firewallRules.filter(function (r) { return (r.chain || 'input') === chain; });
         for (var i = 0; i < chainRules.length; i++) {
           var r = chainRules[i];
           if (!r.enabled) continue;
           if (r.inIface && inIface && r.inIface !== inIface) continue;
+          if (chain === 'forward' && r.outIface && outIface && r.outIface !== outIface) continue;
           var protoMatch = r.protocol === 'ANY' || r.protocol.toUpperCase() === proto;
           var srcMatch = Hive.validators.ipMatchesRuleTarget(src, r.source, st.aliases);
           var dstMatch = Hive.validators.ipMatchesRuleTarget(dst, r.destination, st.aliases);
@@ -1953,12 +2180,13 @@
             return Promise.resolve({ matched: true, rule: clone(r), ruleIndex: i + 1, action: r.action });
           }
         }
-        var isLanIn = inIface === st.lanConfig.interface;
+        var wgIf = (st.vpn && st.vpn.wireguard && st.vpn.wireguard.iface) || 'wg0';
+        var isTrustedIn = inIface === st.lanConfig.interface || (chain === 'forward' && inIface === wgIf);
         return Promise.resolve({
           matched: false,
           rule: null,
-          action: isLanIn ? 'pass' : 'block',
-          defaultPolicy: isLanIn ? 'allow (LAN default)' : 'drop (WAN hardened default)'
+          action: isTrustedIn ? 'pass' : 'block',
+          defaultPolicy: isTrustedIn ? 'allow (LAN / VPN default)' : 'drop (WAN hardened default)'
         });
       },
 
@@ -2095,15 +2323,52 @@
       },
 
       createPeerLive: function (payload) {
-        return Hive.api
-          .request('/vpn/wireguard/peers', {
-            method: 'POST',
-            body: {
-              name: payload.name,
-              allowed_ips: payload.allowedIps,
-              public_key: payload.publicKey || '',
-              use_psk: Boolean(payload.usePsk)
-            }
+        var baseWg = Hive.store.getCommittedState().vpn.wireguard;
+        var nextWg = Hive.store.getState().vpn.wireguard;
+        var baseFw = Hive.store.getCommittedState().firewallConfig;
+        var nextFw = Hive.store.getState().firewallConfig;
+        var syncSrv = Promise.resolve();
+        if (
+          baseWg.enabled !== nextWg.enabled ||
+          baseWg.tunnelSubnet !== nextWg.tunnelSubnet ||
+          baseWg.listenPort !== nextWg.listenPort ||
+          baseWg.endpointHost !== nextWg.endpointHost ||
+          baseWg.dns !== nextWg.dns
+        ) {
+          syncSrv = Hive.api
+            .request('/vpn/wireguard', {
+              method: 'PUT',
+              body: {
+                enabled: Boolean(nextWg.enabled),
+                address: nextWg.tunnelSubnet,
+                listen_port: Number(nextWg.listenPort || 51820),
+                endpoint: nextWg.endpointHost || '',
+                dns: nextWg.dns || Hive.store.getState().lanConfig.ip
+              }
+            })
+            .then(function () {
+              if (baseFw.exposeWireguard !== nextFw.exposeWireguard || baseFw.wireguardPort !== nextFw.wireguardPort) {
+                return Hive.api.request('/firewall/toggles', {
+                  method: 'PATCH',
+                  body: {
+                    expose_wireguard: Boolean(nextFw.exposeWireguard),
+                    wireguard_port: Number(nextFw.wireguardPort || nextWg.listenPort || 51820)
+                  }
+                });
+              }
+            });
+        }
+        return syncSrv
+          .then(function () {
+            return Hive.api.request('/vpn/wireguard/peers', {
+              method: 'POST',
+              body: {
+                name: payload.name,
+                allowed_ips: payload.allowedIps,
+                public_key: payload.publicKey || '',
+                use_psk: Boolean(payload.usePsk)
+              }
+            });
           })
           .then(function (res) {
             return bootstrapAll().then(function () {
@@ -2179,15 +2444,22 @@
         return safeGet('/firewall/conntrack').then(function (res) {
           if (res && Array.isArray(res.flows)) {
             var stRef = Hive.store.getState();
-            var lanPrefix = (stRef.lanConfig.ip || '192.168.10.1').split('.').slice(0, 3).join('.') + '.';
-            var wgPrefix = (stRef.vpn.wireguard.tunnelSubnet || '10.66.66.1').split('.').slice(0, 2).join('.') + '.';
+            var v = Hive.validators;
+            var lanIp = (stRef.lanConfig && stRef.lanConfig.ip) || '192.168.10.1';
+            var lanMask = (stRef.lanConfig && stRef.lanConfig.netmask) || '255.255.255.0';
+            var lanCidr = lanIp + '/' + netmaskToPrefix(lanMask);
+            var wgCidr = (stRef.vpn && stRef.vpn.wireguard && stRef.vpn.wireguard.tunnelSubnet) || '10.66.66.1/24';
+            var lanIfaceEntry = (stRef.interfaces || []).find(function (i) { return i.device === stRef.lanConfig.interface; });
+            var lanV6Cidr = lanIfaceEntry && lanIfaceEntry.ipv6 && lanIfaceEntry.ipv6 !== '—' ? lanIfaceEntry.ipv6 : '';
             var mapped = res.flows.map(function (f, idx) {
               var proto = String(f.proto || 'tcp').toUpperCase();
               var src = f.src || '0.0.0.0';
               var dst = f.dst || '0.0.0.0';
               var bytesTotal = (Number(f.bytes) || 0) + (Number(f.reply_bytes) || 0);
               var pktsTotal = (Number(f.packets) || 0) + (Number(f.reply_packets) || 0);
-              var zone = src.indexOf(wgPrefix) === 0 ? 'vpn' : src.indexOf(lanPrefix) === 0 ? 'lan' : 'wan';
+              var zone = 'wan';
+              if (v && v.ipMatchesCidr(src, wgCidr)) zone = 'vpn';
+              else if (v && (v.ipMatchesCidr(src, lanCidr) || (lanV6Cidr && v.ipMatchesCidr(src, lanV6Cidr)))) zone = 'lan';
               return {
                 id: 'ct-' + idx,
                 protocol: proto,
@@ -2245,12 +2517,13 @@
                 var isBlk = reason.indexOf('Filtered') === 0 || reason.indexOf('Blocked') !== -1;
                 var isAlw = reason.indexOf('NotFilteredWhiteList') === 0;
                 var tStr = q.time ? String(q.time).slice(11, 19) : '—';
+                var domName = String((q.question && q.question.name) || '—').replace(/\.$/, '');
                 return {
                   id: 'ql-' + idx,
                   time: tStr,
                   clientIp: q.client || '—',
                   clientName: q.client_info && q.client_info.name ? q.client_info.name : (q.client || 'LAN Client'),
-                  domain: (q.question && q.question.name) || '—',
+                  domain: domName,
                   type: (q.question && q.question.type) || 'A',
                   action: isBlk ? 'blocked' : isAlw ? 'allowlisted' : 'allowed',
                   source: reason || 'Upstream',
@@ -2259,6 +2532,53 @@
               });
             }, 'querylog-refresh');
           }
+          return clone(Hive.store.getState().adblock);
+        });
+      },
+
+      refreshQueryLog: function () {
+        return Promise.all([
+          safeGet('/dns/querylog?limit=100'),
+          safeGet('/dns/stats'),
+          safeGet('/dns/status')
+        ]).then(function (arr) {
+          var qlRes = arr[0];
+          var dnsMetrics = arr[1];
+          var dnsStatRes = arr[2];
+          Hive.store.updateRuntimeState(function (st) {
+            if (qlRes && Array.isArray(qlRes.data)) {
+              st.adblock.queryLog = qlRes.data.map(function (q, idx) {
+                var reason = String(q.reason || '');
+                var isBlk = reason.indexOf('Filtered') === 0 || reason.indexOf('Blocked') !== -1;
+                var isAlw = reason.indexOf('NotFilteredWhiteList') === 0;
+                var tStr = q.time ? String(q.time).slice(11, 19) : '—';
+                var domName = String((q.question && q.question.name) || '—').replace(/\.$/, '');
+                return {
+                  id: 'ql-' + idx,
+                  time: tStr,
+                  clientIp: q.client || '—',
+                  clientName: q.client_info && q.client_info.name ? q.client_info.name : (q.client || 'LAN Client'),
+                  domain: domName,
+                  type: (q.question && q.question.type) || 'A',
+                  action: isBlk ? 'blocked' : isAlw ? 'allowlisted' : 'allowed',
+                  source: reason || 'Upstream',
+                  latencyMs: Number(Number(q.elapsedMs || 0).toFixed(1))
+                };
+              });
+            }
+            if (dnsMetrics) {
+              var totalQ = Number(dnsMetrics.num_dns_queries || 0);
+              var blkQ = Number(dnsMetrics.num_blocked_filtering || 0);
+              var avgRaw = Number(dnsMetrics.avg_processing_time || 0);
+              st.adblock.queriesToday = totalQ;
+              st.adblock.blockedToday = blkQ;
+              st.adblock.blockedPercent = totalQ > 0 ? Number(((blkQ / totalQ) * 100).toFixed(1)) : 0;
+              st.adblock.avgLatencyMs = Number((avgRaw < 2 ? avgRaw * 1000 : avgRaw).toFixed(1));
+            }
+            if (dnsStatRes) {
+              st.adblock.running = Boolean(dnsStatRes.running);
+            }
+          }, 'querylog-refresh');
           return clone(Hive.store.getState().adblock);
         });
       },
@@ -2275,10 +2595,14 @@
       },
 
       toggleForceDns: function (enabled) {
-        Hive.store.stageMutation({ module: 'AdBlock' }, function (state) {
-          state.adblock.forceDns = Boolean(enabled);
-          state.firewallConfig.transparentDns = Boolean(enabled);
-        });
+        Hive.store.stageMutation(
+          { module: 'AdBlock' },
+          function (state) {
+            state.adblock.forceDns = Boolean(enabled);
+            state.firewallConfig.transparentDns = Boolean(enabled);
+          },
+          { reason: 'inline-toggle' }
+        );
         return Promise.resolve({ forceDns: Boolean(enabled) });
       },
 
@@ -2295,20 +2619,44 @@
       },
 
       addFeed: function (payload) {
-        var id = nextId('feed');
-        Hive.store.stageMutation({ module: 'AdBlock' }, function (state) {
-          state.adblock.feeds.push({
-            id: id,
-            name: payload.name,
-            category: 'Custom',
-            url: payload.url,
-            domains: 0,
-            lastUpdated: 'Pending Apply',
-            builtin: false,
-            enabled: true
-          });
+        return Hive.services.adblock.saveFeed(payload);
+      },
+
+      saveFeed: function (payload) {
+        var isEdit = Boolean(payload.id);
+        var id = payload.id || nextId('feed');
+        var cleanName = String(payload.name || '').trim();
+        var cleanUrl = String(payload.url || '').trim();
+        var curFeeds = Hive.store.getState().adblock.feeds || [];
+        var dup = curFeeds.some(function (f) {
+          return f.id !== id && f.url.toLowerCase() === cleanUrl.toLowerCase();
         });
-        return Promise.resolve({ id: id });
+        if (dup) {
+          return Promise.resolve({ ok: false, reason: 'A filter list with this URL is already configured.' });
+        }
+        Hive.store.stageMutation({ module: 'AdBlock' }, function (state) {
+          if (isEdit) {
+            var idx = state.adblock.feeds.findIndex(function (x) { return x.id === id; });
+            if (idx !== -1) {
+              state.adblock.feeds[idx] = Object.assign({}, state.adblock.feeds[idx], {
+                name: cleanName,
+                url: cleanUrl
+              });
+            }
+          } else {
+            state.adblock.feeds.push({
+              id: id,
+              name: cleanName,
+              category: 'Custom',
+              url: cleanUrl,
+              domains: 0,
+              lastUpdated: 'Pending Apply',
+              builtin: false,
+              enabled: true
+            });
+          }
+        });
+        return Promise.resolve({ ok: true, id: id });
       },
 
       deleteFeed: function (id) {
@@ -2325,7 +2673,7 @@
       },
 
       addRule: function (listType, payload) {
-        var domain = String(payload.domain || '').trim().toLowerCase();
+        var domain = String(payload.domain || '').trim().toLowerCase().replace(/\.$/, '');
         var isAllow = listType === 'allow';
         var st = Hive.store.getState().adblock;
         var arr = isAllow ? st.allowlist : st.customBlocked;
@@ -2358,14 +2706,18 @@
       },
 
       toggleBlockedService: function (serviceId, blocked) {
-        Hive.store.stageMutation({ module: 'AdBlock' }, function (state) {
-          var cur = (state.adblock.blockedServices || []).slice();
-          var idx = cur.indexOf(serviceId);
-          if (blocked && idx === -1) cur.push(serviceId);
-          if (!blocked && idx !== -1) cur.splice(idx, 1);
-          cur.sort();
-          state.adblock.blockedServices = cur;
-        });
+        Hive.store.stageMutation(
+          { module: 'AdBlock' },
+          function (state) {
+            var cur = (state.adblock.blockedServices || []).slice();
+            var idx = cur.indexOf(serviceId);
+            if (blocked && idx === -1) cur.push(serviceId);
+            if (!blocked && idx !== -1) cur.splice(idx, 1);
+            cur.sort();
+            state.adblock.blockedServices = cur;
+          },
+          { reason: 'inline-toggle' }
+        );
         return Promise.resolve(true);
       }
     },
@@ -2600,6 +2952,9 @@
       toServiceCsv: function (rows) {
         function escCsv(v) {
           var s = String(v === undefined || v === null ? '' : v);
+          if (/^[=+\-@\t\r]/.test(s)) {
+            s = "'" + s;
+          }
           return '"' + s.replace(/"/g, '""') + '"';
         }
         var header = ['Timestamp', 'Severity', 'Process', 'Host', 'PID', 'Message'].join(',');

@@ -146,22 +146,30 @@
     state.$root.find('[data-set-count="cron"]').text((d.cron && d.cron.jobs ? d.cron.jobs.length : 0));
 
     // Tab 1: General Identity & Chrony NTP
-    $('#q-set-host').val(d.hostname || 'netbee');
-
-    var tzs = (d.general && d.general.availableTimezones && d.general.availableTimezones.length)
-      ? d.general.availableTimezones
-      : ['UTC', 'Europe/Istanbul', 'Europe/Berlin', 'Europe/London', 'America/New_York'];
-    var curTz = (d.general && d.general.timezone) || 'UTC';
-    if (tzs.indexOf(curTz) === -1) tzs = [curTz].concat(tzs);
-    var tzItems = tzs.map(function (z) {
-      return '<div class="item" data-value="' + esc(z) + '">' + esc(z) + '</div>';
-    }).join('');
-    var $tzDd = $('#q-set-tz-dd');
-    $tzDd.find('.menu').html(tzItems);
-    $tzDd.dropdown('refresh').dropdown('set selected', curTz);
-
-    $('#q-set-ntp-list').val(((d.general && d.general.ntpServers) || ['0.pool.ntp.org']).join(', '));
-    $('#q-set-ntp-lan-chk').checkbox(d.general && d.general.ntpServeLan ? 'set checked' : 'set unchecked');
+    var $genForm = state.$root.find('#q-set-general-form');
+    var genEditing = $genForm.length && $genForm[0].contains(document.activeElement);
+    if (!genEditing) {
+      $('#q-set-host').val(d.hostname || 'netbee');
+      var tzs = (d.general && d.general.availableTimezones && d.general.availableTimezones.length)
+        ? d.general.availableTimezones
+        : ['UTC', 'Europe/Istanbul', 'Europe/Berlin', 'Europe/London', 'America/New_York'];
+      var curTz = (d.general && d.general.timezone) || 'UTC';
+      if (tzs.indexOf(curTz) === -1) tzs = [curTz].concat(tzs);
+      var tzItems = tzs.map(function (z) {
+        return '<div class="item" data-value="' + esc(z) + '">' + esc(z) + '</div>';
+      }).join('');
+      var $tzDd = $('#q-set-tz-dd');
+      $tzDd.find('.menu').html(tzItems);
+      $tzDd.dropdown('refresh').dropdown('set selected', curTz);
+      $('#q-set-ntp-list').val(((d.general && d.general.ntpServers) || ['0.pool.ntp.org']).join(', '));
+      $('#q-set-ntp-lan-chk').checkbox(d.general && d.general.ntpServeLan ? 'set checked' : 'set unchecked');
+    }
+    var stLan = Hive.store ? Hive.store.getState().lanConfig : null;
+    var lanSubnetLbl = stLan && stLan.ip ? (stLan.ip.split('.').slice(0, 3).join('.') + '.0/24') : '192.168.10.0/24';
+    if (stLan && stLan.netmask && stLan.netmask !== '255.255.255.0') {
+      lanSubnetLbl = stLan.ip + ' / ' + stLan.netmask;
+    }
+    state.$root.find('#q-set-ntp-lan-subnet').text(lanSubnetLbl);
 
     var trackingOut = (d.general && d.general.ntpTracking) || 'Chrony tracking telemetry unavailable in current environment.';
     var sourcesOut = (d.general && d.general.ntpSources) ? ('\n\n' + d.general.ntpSources) : '';
@@ -210,8 +218,8 @@
           '  <td><span class="ui label q-badge-square q-mono">' + esc(actDesc) + '</span></td>' +
           '  <td><span class="ui label ' + (j.enabled ? 'q-status-success' : '') + '">' + (j.enabled ? 'Enabled' : 'Disabled') + '</span></td>' +
           '  <td><div class="q-row-actions">' +
-          '    <button type="button" class="ui mini icon button q-btn-ghost q-cron-edit-btn" data-id="' + esc(j.id) + '" title="Edit task"><i data-lucide="pencil" class="q-icon q-icon-sm"></i></button>' +
-          '    <button type="button" class="ui mini icon button q-btn-ghost q-cron-del-btn" data-id="' + esc(j.id) + '" title="Delete task"><i data-lucide="trash-2" class="q-icon q-icon-sm q-text-danger"></i></button>' +
+          '    <button type="button" class="ui mini icon button q-btn-ghost q-cron-edit-btn" data-id="' + esc(j.id) + '" title="Edit task" aria-label="Edit scheduled task ' + esc(j.name) + '"><i data-lucide="pencil" class="q-icon q-icon-sm"></i></button>' +
+          '    <button type="button" class="ui mini icon button q-btn-ghost q-cron-del-btn" data-id="' + esc(j.id) + '" data-name="' + esc(j.name) + '" title="Delete task" aria-label="Delete scheduled task ' + esc(j.name) + '"><i data-lucide="trash-2" class="q-icon q-icon-sm q-text-danger"></i></button>' +
           '  </div></td>' +
           '</tr>'
         );
@@ -221,13 +229,17 @@
 
     // Tab 4: Kernel Sysctl
     var sc = d.sysctl || {};
-    $('#q-sc-ctmax').val(sc.conntrackMax || 131072);
     state.$root.find('#q-sc-ctcur').text('Active sessions: ' + fmt.number(sc.conntrackCount || 0));
-    $('#q-sc-rpf-dd').dropdown('set selected', String(sc.rpFilter !== undefined ? sc.rpFilter : 1));
-    $('#q-sc-syncookies-chk').checkbox(sc.tcpSyncookies !== false ? 'set checked' : 'set unchecked');
-    $('#q-sc-bcast-chk').checkbox(sc.icmpEchoIgnoreBroadcasts !== false ? 'set checked' : 'set unchecked');
-    $('#q-sc-v4fwd-chk').checkbox(sc.ipv4Forwarding !== false ? 'set checked' : 'set unchecked');
-    $('#q-sc-v6fwd-chk').checkbox(sc.ipv6Forwarding !== false ? 'set checked' : 'set unchecked');
+    var $scForm = state.$root.find('#q-sysctl-form');
+    var scEditing = $scForm.length && $scForm[0].contains(document.activeElement);
+    if (!scEditing) {
+      $('#q-sc-ctmax').val(sc.conntrackMax || 131072);
+      $('#q-sc-rpf-dd').dropdown('set selected', String(sc.rpFilter !== undefined ? sc.rpFilter : 1));
+      $('#q-sc-syncookies-chk').checkbox(sc.tcpSyncookies !== false ? 'set checked' : 'set unchecked');
+      $('#q-sc-bcast-chk').checkbox(sc.icmpEchoIgnoreBroadcasts !== false ? 'set checked' : 'set unchecked');
+      $('#q-sc-v4fwd-chk').checkbox(sc.ipv4Forwarding !== false ? 'set checked' : 'set unchecked');
+      $('#q-sc-v6fwd-chk').checkbox(sc.ipv6Forwarding !== false ? 'set checked' : 'set unchecked');
+    }
 
     if (Hive.icons) Hive.icons.render();
   }
@@ -356,7 +368,7 @@
         '          <span class="q-field-error" id="q-set-ntp-err" hidden>Enter one or more valid NTP hostnames or IP addresses.</span>' +
         '        </div>' +
         '        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:16px;">' +
-        '          <div class="ui toggle checkbox" id="q-set-ntp-lan-chk"><input type="checkbox" id="q-set-ntp-lan"><label for="q-set-ntp-lan">Serve NTP time to LAN clients on 192.168.10.0/24 (UDP/123)</label></div>' +
+        '          <div class="ui toggle checkbox" id="q-set-ntp-lan-chk"><input type="checkbox" id="q-set-ntp-lan"><label for="q-set-ntp-lan">Serve NTP time to LAN clients on <span class="q-mono" id="q-set-ntp-lan-subnet">192.168.10.0/24</span> (UDP/123)</label></div>' +
         '          <button type="submit" class="ui primary small button">Stage Identity &amp; NTP</button>' +
         '        </div>' +
         '      </form>' +
@@ -494,19 +506,34 @@
       if ($btn.hasClass('loading')) return;
       var name = $btn.attr('data-name');
       var action = $btn.attr('data-action') || 'restart';
-      $btn.addClass('loading disabled');
-      Hive.services.settings
-        .serviceAction(name, action)
-        .then(function () {
-          Hive.ui.notify({ title: 'Service ' + action.toUpperCase(), message: name + ' executed ' + action + ' cleanly.', type: 'success' });
-          loadAndRender();
-        })
-        .catch(function (err) {
-          Hive.ui.notify({ title: 'Service Action Failed', message: err.message || ('Failed to ' + action + ' ' + name), type: 'error' });
-        })
-        .finally(function () {
-          if (state.$root) $btn.removeClass('loading disabled');
+
+      function runServiceOp() {
+        $btn.addClass('loading disabled');
+        Hive.services.settings
+          .serviceAction(name, action)
+          .then(function () {
+            Hive.ui.notify({ title: 'Service ' + action.toUpperCase(), message: name + ' executed ' + action + ' cleanly.', type: 'success' });
+            loadAndRender();
+          })
+          .catch(function (err) {
+            Hive.ui.notify({ title: 'Service Action Failed', message: err.message || ('Failed to ' + action + ' ' + name), type: 'error' });
+          })
+          .finally(function () {
+            if (state.$root) $btn.removeClass('loading disabled');
+          });
+      }
+
+      if (action === 'stop') {
+        Hive.ui.confirm({
+          title: 'Stop System Service (' + name + ')?',
+          message: 'Stopping "' + name + '" immediately halts its daemon process on the live router until manually restarted.',
+          confirmText: 'Stop Service',
+          danger: true,
+          onConfirm: runServiceOp
         });
+        return;
+      }
+      runServiceOp();
     });
 
     // Tab 3 Cron
@@ -514,15 +541,24 @@
     $container.on('click.qSettings', '.q-cron-edit-btn', function () { openCronModal($(this).attr('data-id')); });
     $container.on('click.qSettings', '.q-cron-del-btn', function () {
       var id = $(this).attr('data-id');
-      Hive.services.settings
-        .deleteCronJob(id)
-        .then(function () {
-          Hive.ui.notify({ title: 'Scheduled Task Deleted', message: 'Removed task from /etc/cron/crontabs/root.', type: 'warning' });
-          loadAndRender();
-        })
-        .catch(function (err) {
-          Hive.ui.notify({ title: 'Delete Failed', message: err.message || 'Could not remove task.', type: 'error' });
-        });
+      var taskName = $(this).attr('data-name') || id;
+      Hive.ui.confirm({
+        title: 'Delete Scheduled Task?',
+        message: 'Remove "' + taskName + '" from /etc/cron/crontabs/root permanently?',
+        confirmText: 'Delete Task',
+        danger: true,
+        onConfirm: function () {
+          Hive.services.settings
+            .deleteCronJob(id)
+            .then(function () {
+              Hive.ui.notify({ title: 'Scheduled Task Deleted', message: 'Removed task from /etc/cron/crontabs/root.', type: 'warning' });
+              loadAndRender();
+            })
+            .catch(function (err) {
+              Hive.ui.notify({ title: 'Delete Failed', message: err.message || 'Could not remove task.', type: 'error' });
+            });
+        }
+      });
     });
 
     // Tab 4 Sysctl & Power
@@ -594,7 +630,7 @@
 
     state.stateListener = function (e) {
       var reason = e && e.detail ? e.detail.reason : '';
-      if (reason === 'telemetry' || reason === 'flows-tick' || reason === 'audit' || reason === 'kernel-log') return;
+      if (Hive.store.isRuntimeOnlyReason(reason)) return;
       loadAndRender();
     };
     window.addEventListener('hive:statechange', state.stateListener);

@@ -43,6 +43,13 @@
       }
     }
     activeModule = null;
+
+    // Clean any orphaned detached module modals and unlock body scroll if no shell modal is open
+    $('.ui.dimmer.modals.page > .ui.modal:not(.q-shell-modal)').remove();
+    if (!$('.ui.modal.q-shell-modal.active').length) {
+      $('.ui.dimmer.modals.page').removeClass('visible active animating');
+      $('body').removeClass('dimmed scrolling');
+    }
   }
 
   function navigate(route) {
@@ -64,8 +71,10 @@
 
   function resolve(explicitRoute) {
     var route = explicitRoute || parseHash();
+    if (route === '/foundation/shell') {
+      route = DEFAULT_ROUTE;
+    }
     var $mount = $('#q-module-mount');
-    var $shellHome = $('#q-shell-home-view');
     var $placeholder = $('#q-shell-placeholder-view');
 
     if (!$mount.length) return;
@@ -75,33 +84,17 @@
 
     $('.q-nav-item').removeClass('is-active');
 
-    // Special route: Phase 1 Application Shell Home
-    if (route === '/foundation/shell') {
-      $mount.empty().attr('hidden', true);
-      $placeholder.attr('hidden', true);
-      $shellHome.removeAttr('hidden');
-      triggerViewEnter($shellHome);
-      $('[data-q-nav="shell"]').addClass('is-active');
-
-      Hive.shell.updateBreadcrumbs([
-        { label: 'Hive', href: '#/overview/system' },
-        { label: 'Foundation' },
-        { label: 'Application Shell' }
-      ]);
-      document.title = 'Application Shell — Hive';
-      return;
-    }
-
-    // Registered Phase 2+ interactive module
+    // Registered interactive module
     var mod = registry[route];
     var navItem = findNavItem(route);
 
     if (mod) {
-      $shellHome.attr('hidden', true);
       $placeholder.attr('hidden', true);
       $mount.removeAttr('hidden').empty();
 
-      $('.q-nav-item[data-q-route="' + route + '"]').addClass('is-active');
+      $('.q-nav-item')
+        .filter(function () { return $(this).attr('data-q-route') === route; })
+        .addClass('is-active');
 
       var groupName = mod.group || (navItem ? navItem.group : 'Module');
       var title = mod.title || (navItem ? navItem.label : 'Hive');
@@ -117,19 +110,20 @@
       mod.mount($mount);
       triggerViewEnter($mount);
 
-      if (Hive.icons) Hive.icons.render();
+      if (Hive.icons) Hive.icons.render($mount[0]);
       if (Hive.ui) Hive.ui.init($mount);
       return;
     }
 
-    // Fallback: Phase 3+ deferred module placeholder
+    // Fallback: Unknown route placeholder
     $mount.empty().attr('hidden', true);
-    $shellHome.attr('hidden', true);
     $placeholder.removeAttr('hidden');
     triggerViewEnter($placeholder);
 
     if (navItem) {
-      $('.q-nav-item[data-q-route="' + navItem.route + '"]').addClass('is-active');
+      $('.q-nav-item')
+        .filter(function () { return $(this).attr('data-q-route') === navItem.route; })
+        .addClass('is-active');
       $('#q-placeholder-group').text(navItem.group);
       $('#q-placeholder-title').text(navItem.label);
       $('#q-placeholder-desc').text(navItem.description);

@@ -250,6 +250,9 @@
     isAuthenticated: function () {
       return sessionState.authenticated;
     },
+    clearMustChangePassword: function () {
+      sessionState.mustChangePassword = false;
+    },
     checkSession: function () {
       return Hive.api
         .request('/auth/me', { method: 'GET', skipAuthRedirect: true })
@@ -366,13 +369,22 @@
             }
           }
           if (!resp.ok) {
-            var errMsg = (data && data.error) || 'Request failed (HTTP ' + resp.status + ')';
+            var rawErr = data && typeof data.raw === 'string' ? data.raw.trim() : '';
+            if (rawErr && rawErr.charAt(0) === '<') rawErr = '';
+            var errMsg =
+              (data && (data.error || data.message)) ||
+              (rawErr ? rawErr.slice(0, 240) : '') ||
+              ('Request failed (HTTP ' + resp.status + ')');
             var err = new Error(errMsg);
             err.status = resp.status;
             err.data = data;
             throw err;
           }
-          if (data && data.pending_commit && typeof data.pending_commit.pending === 'boolean') {
+          if (
+            data &&
+            data.pending_commit &&
+            (typeof data.pending_commit.active === 'boolean' || typeof data.pending_commit.pending === 'boolean')
+          ) {
             window.dispatchEvent(new CustomEvent('hive:pendingcommit', { detail: data.pending_commit }));
           }
           return data;

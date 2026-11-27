@@ -11,6 +11,7 @@
     $root: null,
     mountToken: 0,
     adblock: null,
+    editingFeedId: null,
     serviceSearch: '',
     querySearch: '',
     queryAction: 'all',
@@ -21,12 +22,44 @@
     $('#q-ab-feed-modal, #q-ab-rule-modal').modal('hide').remove();
   }
 
+  function normalizeRuleDomainInput(raw, selectedType) {
+    var s = String(raw || '').trim();
+    var listType = selectedType || 'block';
+    if (!s) return { valid: false, domain: '', listType: listType };
+
+    // Handle /etc/hosts lines like "0.0.0.0 ads.example.com" or "127.0.0.1 tracker.net"
+    var hostsMatch = s.match(/^(?:0\.0\.0\.0|127\.0\.0\.1|::1?)\s+(\S+)$/);
+    if (hostsMatch) {
+      s = hostsMatch[1];
+    }
+
+    // Handle AdGuard syntax like "@@||example.com^$important" or "||example.com^"
+    if (s.indexOf('@@||') === 0) {
+      listType = 'allow';
+      s = s.slice(4);
+      var cA = s.indexOf('^');
+      if (cA !== -1) s = s.slice(0, cA);
+    } else if (s.indexOf('||') === 0) {
+      s = s.slice(2);
+      var cB = s.indexOf('^');
+      if (cB !== -1) s = s.slice(0, cB);
+    } else if (/^https?:\/\//i.test(s)) {
+      s = s.replace(/^https?:\/\//i, '').split(/[/?#]/)[0].split(':')[0];
+    }
+
+    s = s.trim().toLowerCase().replace(/\.$/, '');
+    var domainCheck = s.replace(/^\*\./, '');
+    var validLabelDomain = /^(?=.{1,253}$)(?:_[a-z0-9-]+|[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)(?:\.(?:_[a-z0-9-]+|[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?))+$/i.test(domainCheck);
+    var isValid = Hive.validators.isDomainOrWildcard(s) || validLabelDomain;
+    return { valid: isValid, domain: s, listType: listType };
+  }
+
   function renderModalsHtml() {
     return (
-      // Add Custom Blocklist Feed Modal
+      // Add / Edit Custom Blocklist Feed Modal
       '<div class="ui small modal" id="q-ab-feed-modal" role="dialog" aria-labelledby="q-ab-feed-title">' +
       '  <div class="header">' +
-      '    <span class="q-modal-header-title" id="q-ab-feed-title"><i data-lucide="list" class="q-icon q-text-accent"></i><span>Add DNSBL Filter List</span></span>' +
+      '    <span class="q-modal-header-title" id="q-ab-feed-title"><i data-lucide="list" class="q-icon q-text-accent"></i><span id="q-ab-feed-heading">Add DNSBL Filter List</span></span>' +
       '    <button type="button" class="ui mini icon button q-btn-ghost cancel" aria-label="Close"><i data-lucide="x" class="q-icon"></i></button>' +
       '  </div>' +
       '  <div class="content">' +
@@ -128,15 +161,15 @@
       .map(function (svc) {
         var isBlk = Boolean(blockedSet[svc.id]);
         return (
-          '<label class="q-service-block-item' + (isBlk ? ' is-blocked' : '') + '">' +
-          '  <div>' +
+          '<div class="q-service-block-item' + (isBlk ? ' is-blocked' : '') + '" data-svc-card="' + esc(svc.id) + '" role="group" aria-label="' + esc(svc.name) + '">' +
+          '  <div style="cursor:pointer;">' +
           '    <div style="font-weight:600;color:var(--q-text);">' + esc(svc.name) + '</div>' +
           '    <div class="q-mono q-text-muted" style="font-size:11px;">' + esc(svc.id) + '</div>' +
           '  </div>' +
           '  <div class="ui fitted toggle checkbox q-ab-svc-toggle" data-svc-id="' + esc(svc.id) + '">' +
           '    <input type="checkbox"' + (isBlk ? ' checked' : '') + ' aria-label="Block ' + esc(svc.name) + '"><label></label>' +
           '  </div>' +
-          '</label>'
+          '</div>'
         );
       })
       .join('');
@@ -211,7 +244,10 @@
           '  <td class="q-mono">' + fmt.number(f.domains) + '</td>' +
           '  <td class="q-mono q-text-muted">' + esc(f.lastUpdated) + '</td>' +
           '  <td><div class="ui fitted toggle checkbox q-ab-feed-toggle" data-id="' + esc(f.id) + '"><input type="checkbox"' + (f.enabled ? ' checked' : '') + ' aria-label="Toggle feed ' + esc(f.name) + '"><label></label></div></td>' +
-          '  <td><button type="button" class="ui mini icon button q-btn-ghost q-ab-feed-del" data-id="' + esc(f.id) + '" aria-label="Remove filter list"><i data-lucide="trash-2" class="q-icon q-icon-sm q-text-danger"></i></button></td>' +
+          '  <td><div class="q-row-actions">' +
+          '    <button type="button" class="ui mini icon button q-btn-ghost q-ab-feed-edit" data-id="' + esc(f.id) + '" aria-label="Edit filter list ' + esc(f.name) + '"><i data-lucide="pencil" class="q-icon q-icon-sm"></i></button>' +
+          '    <button type="button" class="ui mini icon button q-btn-ghost q-ab-feed-del" data-id="' + esc(f.id) + '" aria-label="Remove filter list ' + esc(f.name) + '"><i data-lucide="trash-2" class="q-icon q-icon-sm q-text-danger"></i></button>' +
+          '  </div></td>' +
           '</tr>'
         );
       })
@@ -252,6 +288,20 @@
     state.$root.find('#q-ab-feeds-tbody .ui.checkbox').checkbox();
   }
 
+  function openFeedModal(id) {
+    state.editingFeedId = id || null;
+    var f = id && state.adblock && state.adblock.feeds
+      ? state.adblock.feeds.find(function (x) { return x.id === id; })
+      : null;
+    $('#q-ab-feed-heading').text(f ? 'Edit DNSBL Filter List' : 'Add DNSBL Filter List');
+    $('#q-ab-fname').val(f ? f.name : '');
+    $('#q-ab-furl').val(f ? f.url : '');
+    $('#q-ab-fname-field, #q-ab-furl-field').removeClass('error');
+    $('#q-ab-fname-err').text('Enter a filter list name.').attr('hidden', true);
+    $('#q-ab-furl-err').text('Enter a valid http:// or https:// URL.').attr('hidden', true);
+    Hive.ui.openModal('#q-ab-feed-modal');
+  }
+
   function saveFeedModal() {
     var name = $.trim($('#q-ab-fname').val());
     var url = $.trim($('#q-ab-furl').val());
@@ -259,29 +309,38 @@
     $('#q-ab-fname-field, #q-ab-furl-field').removeClass('error');
     $('#q-ab-fname-err, #q-ab-furl-err').attr('hidden', true);
     if (!name) { $('#q-ab-fname-field').addClass('error'); $('#q-ab-fname-err').removeAttr('hidden'); ok = false; }
-    if (!Hive.validators.isHttpUrl(url)) { $('#q-ab-furl-field').addClass('error'); $('#q-ab-furl-err').removeAttr('hidden'); ok = false; }
+    if (!Hive.validators.isHttpUrl(url)) { $('#q-ab-furl-field').addClass('error'); $('#q-ab-furl-err').text('Enter a valid http:// or https:// URL.').removeAttr('hidden'); ok = false; }
     if (!ok) return;
 
-    Hive.services.adblock.addFeed({ name: name, url: url }).then(function () {
+    Hive.services.adblock.saveFeed({ id: state.editingFeedId, name: name, url: url }).then(function (res) {
+      if (res && res.ok === false) {
+        $('#q-ab-furl-field').addClass('error');
+        $('#q-ab-furl-err').text(res.reason || 'Duplicate filter URL.').removeAttr('hidden');
+        return;
+      }
       $('#q-ab-feed-modal').modal('hide');
-      Hive.ui.notify({ title: 'Filter List Staged', message: '"' + name + '" added to pending diff.', type: 'success' });
+      Hive.ui.notify({
+        title: state.editingFeedId ? 'Filter List Updated' : 'Filter List Staged',
+        message: '"' + name + '" queued in pending changes.',
+        type: 'success'
+      });
     });
   }
 
   function saveRuleModal() {
-    var listType = $('#q-ab-rtype').val() || 'block';
-    var domain = $.trim($('#q-ab-rdom').val()).toLowerCase();
+    var selectedType = $('#q-ab-rtype').val() || 'block';
+    var parsed = normalizeRuleDomainInput($('#q-ab-rdom').val(), selectedType);
     var reason = $.trim($('#q-ab-rreason').val());
     $('#q-ab-rdom-field').removeClass('error');
-    $('#q-ab-rdom-err').text('Enter a valid domain or *.wildcard domain.').attr('hidden', true);
+    $('#q-ab-rdom-err').text('Enter a valid domain (e.g. ads.example.com, *.example.com, or ||domain^).').attr('hidden', true);
 
-    if (!Hive.validators.isDomainOrWildcard(domain)) {
+    if (!parsed.valid) {
       $('#q-ab-rdom-field').addClass('error');
       $('#q-ab-rdom-err').removeAttr('hidden');
       return;
     }
 
-    Hive.services.adblock.addRule(listType, { domain: domain, reason: reason }).then(function (res) {
+    Hive.services.adblock.addRule(parsed.listType, { domain: parsed.domain, reason: reason }).then(function (res) {
       if (!res.ok) {
         $('#q-ab-rdom-field').addClass('error');
         $('#q-ab-rdom-err').text(res.reason).removeAttr('hidden');
@@ -289,7 +348,11 @@
       }
       $('#q-ab-rule-modal').modal('hide');
       $('#q-ab-tabs-ctx .ui.menu .item[data-tab="rules"]').tab('change tab', 'rules');
-      Hive.ui.notify({ title: listType === 'allow' ? 'Allowlist Rule Staged' : 'Block Rule Staged', message: domain + ' queued for commit.', type: 'success' });
+      Hive.ui.notify({
+        title: parsed.listType === 'allow' ? 'Allowlist Rule Staged' : 'Block Rule Staged',
+        message: parsed.domain + ' queued for commit.',
+        type: 'success'
+      });
     });
   }
 
@@ -350,7 +413,7 @@
         '  <div class="ui tab active q-tab-plain" data-tab="feeds">' +
         '    <div class="q-card">' +
         '      <div class="q-card-header"><div><h2 class="q-card-title">Subscribed AdGuard / Hosts Filter Lists</h2><p class="q-card-subtitle">Toggle DNSBL subscriptions or add custom filter URLs.</p></div><button type="button" class="ui mini secondary button" id="q-ab-open-feed-btn"><i data-lucide="plus" class="q-icon q-icon-sm"></i><span>Add Filter List</span></button></div>' +
-        '      <div class="q-table-wrap"><table class="ui selectable striped table"><thead><tr><th>Filter Name &amp; URL</th><th style="width:120px;">Rules</th><th style="width:160px;">Last Synced</th><th style="width:66px;">State</th><th style="width:66px;">Del</th></tr></thead><tbody id="q-ab-feeds-tbody"></tbody></table></div>' +
+        '      <div class="q-table-wrap"><table class="ui selectable striped table"><thead><tr><th>Filter Name &amp; URL</th><th style="width:120px;">Rules</th><th style="width:160px;">Last Synced</th><th style="width:66px;">State</th><th style="width:86px;">Edit</th></tr></thead><tbody id="q-ab-feeds-tbody"></tbody></table></div>' +
         '    </div>' +
         '  </div>' +
 
@@ -446,6 +509,11 @@
       Hive.services.adblock.toggleFeed(id, enabled);
     });
 
+    $container.on('click.qAdblock', '.q-service-block-item', function (e) {
+      if ($(e.target).closest('.q-ab-svc-toggle').length) return;
+      $(this).find('.q-ab-svc-toggle').checkbox('toggle');
+    });
+
     $container.on('change.qAdblock', '.q-ab-svc-toggle input', function () {
       var $toggle = $(this).closest('.q-ab-svc-toggle');
       var svcId = $toggle.attr('data-svc-id');
@@ -477,13 +545,30 @@
         });
     });
 
-    $container.on('click.qAdblock', '#q-ab-qlog-refresh', loadAndRender);
+    $container.on('click.qAdblock', '#q-ab-qlog-refresh', function () {
+      var $btn = $(this);
+      if ($btn.hasClass('loading')) return;
+      $btn.addClass('loading disabled');
+      Hive.services.adblock
+        .refreshQueryLog()
+        .then(function (data) {
+          if (!state.$root) return;
+          state.adblock = data;
+          updateKpis();
+          renderQueryLog();
+          Hive.ui.notify({ title: 'Query Log Refreshed', message: 'Fetched latest DNS queries and counters.', type: 'info', displayTime: 1800 });
+        })
+        .finally(function () {
+          if (state.$root) $btn.removeClass('loading disabled');
+        });
+    });
 
     $container.on('click.qAdblock', '#q-ab-open-feed-btn', function () {
-      $('#q-ab-fname, #q-ab-furl').val('');
-      $('#q-ab-fname-field, #q-ab-furl-field').removeClass('error');
-      $('#q-ab-fname-err, #q-ab-furl-err').attr('hidden', true);
-      Hive.ui.openModal('#q-ab-feed-modal');
+      openFeedModal(null);
+    });
+
+    $container.on('click.qAdblock', '.q-ab-feed-edit', function () {
+      openFeedModal($(this).attr('data-id'));
     });
 
     $container.on('click.qAdblock', '#q-ab-open-rule-btn', function () {
@@ -532,12 +617,20 @@
 
     state.stateListener = function (e) {
       var reason = e && e.detail ? e.detail.reason : '';
-      if (reason === 'telemetry' || reason === 'flows-tick' || reason === 'audit') return;
+      if (Hive.store.isRuntimeOnlyReason(reason)) return;
       if (reason === 'inline-toggle') {
-        Hive.services.adblock.getOverview().then(function (d) { state.adblock = d; renderAllTabs(); });
+        state.adblock = JSON.parse(JSON.stringify(Hive.store.getState().adblock));
+        if (state.$root) {
+          state.$root.find('[data-ab-count="feeds"]').text((state.adblock.feeds || []).length);
+          state.$root.find('[data-ab-count="services"]').text((state.adblock.blockedServices || []).length);
+          $('#q-ab-enabled-chk').checkbox(state.adblock.enabled ? 'set checked' : 'set unchecked');
+          $('#q-ab-force-chk').checkbox(state.adblock.forceDns ? 'set checked' : 'set unchecked');
+          updateKpis();
+        }
         return;
       }
-      loadAndRender();
+      state.adblock = JSON.parse(JSON.stringify(Hive.store.getState().adblock));
+      renderAllTabs();
     };
     window.addEventListener('hive:statechange', state.stateListener);
   }

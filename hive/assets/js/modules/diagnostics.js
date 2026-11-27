@@ -17,18 +17,6 @@
     stateListener: null
   };
 
-  function downloadFile(content, mime, filename) {
-    var blob = new Blob([content], { type: mime });
-    var url = URL.createObjectURL(blob);
-    var a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-  }
-
   function formatMtrOutput(data, target) {
     if (!data || !data.report || !Array.isArray(data.report.hubs)) {
       return data && data.raw ? data.raw : JSON.stringify(data, null, 2);
@@ -354,7 +342,7 @@
 
     $container.on('click.qDiag', '#q-cap-export-btn', function () {
       if (!state.packets.length) return;
-      downloadFile(state.packets.join('\n'), 'text/plain;charset=utf-8', 'netbee-capture.txt');
+      Hive.ui.downloadBlob('netbee-capture.txt', state.packets.join('\n'), 'text/plain;charset=utf-8');
     });
 
     $container.on('submit.qDiag', '#q-iperf-cli-form', function (e) {

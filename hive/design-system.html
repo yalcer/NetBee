@@ -58,8 +58,8 @@
 
       <div class="q-sidebar-footer">
         <div class="q-sidebar-version">
-          <span class="q-mono">v0.5.0-preview</span>
-          <span class="q-text-accent q-mono">OSS</span>
+          <span class="q-mono">NetBee OS</span>
+          <span class="q-text-accent q-mono">RPi 5</span>
         </div>
       </div>
     </aside>
@@ -88,9 +88,9 @@
             <kbd>Ctrl K</kbd>
           </button>
 
-          <button type="button" class="q-host-chip" data-q-copy-host="gw-core-01" data-tooltip="Appliance host (click to copy)" data-position="bottom center" aria-label="Copy appliance hostname gw-core-01">
+          <button type="button" class="q-host-chip" data-q-copy-host="netbee" data-tooltip="Appliance host (click to copy)" data-position="bottom center" aria-label="Copy appliance hostname netbee">
             <span class="q-status-dot is-success" aria-hidden="true"></span>
-            <span>gw-core-01</span>
+            <span>netbee</span>
           </button>
 
           <div class="ui top right pointing dropdown q-header-dropdown q-notif-dropdown" data-q-manual-init>
@@ -120,11 +120,11 @@
             <i data-lucide="moon" class="q-icon q-icon-md q-theme-icon-dark"></i>
           </button>
 
-          <div class="ui top right pointing dropdown q-profile-trigger q-header-dropdown" data-q-manual-init aria-label="Operator profile menu">
+          <div class="ui top right pointing dropdown q-profile-trigger q-header-dropdown" data-q-manual-init tabindex="0" role="button" aria-haspopup="menu" aria-label="Operator profile menu">
             <span class="q-avatar" aria-hidden="true">AD</span>
             <span class="q-profile-meta">
               <span class="q-profile-name">admin</span>
-              <span class="q-profile-role">Superuser</span>
+              <span class="q-profile-role">Administrator</span>
             </span>
             <i data-lucide="chevron-down" class="q-icon q-icon-sm q-text-muted"></i>
             <div class="menu">
@@ -145,10 +145,6 @@
               <a class="item" href="index.html#/overview/system">
                 <i data-lucide="layout-dashboard" class="q-icon"></i>
                 <span>Open Application (Overview)</span>
-              </a>
-              <a class="item" href="index.html#/foundation/shell">
-                <i data-lucide="panel-left" class="q-icon"></i>
-                <span>Application Shell Info</span>
               </a>
             </div>
           </div>
@@ -574,8 +570,8 @@
                 <div class="field">
                   <label for="q-demo-action">Action Input</label>
                   <div class="ui fluid action input q-mono">
-                    <input id="q-demo-action" type="text" class="q-mono" value="qf_pub_9xA2kL8mP4nQ7vR1" readonly>
-                    <button type="button" class="ui secondary button" data-q-copy="qf_pub_9xA2kL8mP4nQ7vR1" data-q-copy-label="Sample token">
+                    <input id="q-demo-action" type="text" class="q-mono" value="wg0:51820/udp" readonly>
+                    <button type="button" class="ui secondary button" data-q-copy="wg0:51820/udp" data-q-copy-label="Sample endpoint">
                       <i data-lucide="copy" class="q-icon q-icon-sm"></i>
                       <span>Copy</span>
                     </button>
@@ -1004,7 +1000,7 @@
                 <i data-lucide="triangle-alert" class="q-icon q-message-icon"></i>
                 <div class="q-message-body">
                   <div class="header">Certificate Expiring Soon</div>
-                  <p>TLS certificate for <span class="q-mono">gw-core-01</span> expires in 14 days.</p>
+                  <p>TLS certificate for <span class="q-mono">netbee.lan</span> expires in 14 days.</p>
                 </div>
                 <button type="button" class="q-message-close" aria-label="Dismiss alert">
                   <i data-lucide="x" class="q-icon q-icon-sm"></i>
@@ -1346,7 +1342,7 @@
       </button>
     </div>
     <div class="content">
-      <p>Apply staged changes to <span class="q-mono">gw-core-01</span>? Active TCP sessions will remain uninterrupted.</p>
+      <p>Apply staged changes to <span class="q-mono">netbee</span>? Active TCP sessions will remain uninterrupted.</p>
     </div>
     <div class="actions">
       <button type="button" class="ui secondary cancel button">Cancel</button>
@@ -1486,7 +1482,7 @@
         </div>
         <div class="q-kv-row">
           <span class="q-kv-label">Host Identifier</span>
-          <span class="q-kv-value q-mono">gw-core-01.lan.hive.local</span>
+          <span class="q-kv-value q-mono">netbee.lan</span>
         </div>
         <div class="q-kv-row">
           <span class="q-kv-label">Management Endpoint</span>

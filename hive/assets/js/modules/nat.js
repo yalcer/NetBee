@@ -319,7 +319,7 @@
 
     state.stateListener = function (e) {
       var reason = e && e.detail ? e.detail.reason : '';
-      if (reason === 'telemetry' || reason === 'flows-tick' || reason === 'audit') return;
+      if (Hive.store.isRuntimeOnlyReason(reason)) return;
       if (reason === 'inline-toggle') {
         Hive.services.nat.getOverview().then(function (data) { state.nat = data.nat; });
         return;

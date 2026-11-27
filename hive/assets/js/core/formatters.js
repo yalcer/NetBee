@@ -59,6 +59,7 @@
       vlan20: 'q-net-vlan',
       vlan30: 'q-net-wireless',
       vpn: 'q-net-vpn',
+      unassigned: 'q-net-vlan',
       dmz: 'q-net-firewall',
       wireless: 'q-net-wireless',
       firewall: 'q-net-firewall'
@@ -74,6 +75,7 @@
       vlan20: 'VLAN 20',
       vlan30: 'VLAN 30',
       vpn: 'VPN',
+      unassigned: 'SPARE',
       dmz: 'DMZ'
     };
     return map[String(zone || '').toLowerCase()] || String(zone || '').toUpperCase();

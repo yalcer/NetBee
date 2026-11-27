@@ -132,6 +132,8 @@
     var peers = wg.peers || [];
     var connectedCount = peers.filter(function (p) { return p.enabled && p.status === 'connected'; }).length;
 
+    $('#q-wg-top-enabled-chk').checkbox(wg.enabled ? 'set checked' : 'set unchecked');
+
     var statusPill = wg.active
       ? '<span class="ui label q-status-success q-mono">Active</span>'
       : wg.enabled
@@ -395,6 +397,7 @@
         '    <p class="q-page-subtitle">Kernel-space <code>wg0</code> encrypted remote access server, Curve25519 key generation, and client profile export.</p>' +
         '  </div>' +
         '  <div class="q-page-actions">' +
+        '    <div class="ui toggle checkbox" id="q-wg-top-enabled-chk" style="margin-right:8px;"><input type="checkbox" id="q-wg-top-enabled"><label for="q-wg-top-enabled">Enable wg0</label></div>' +
         '    <button type="button" class="ui secondary button" id="q-wg-srv-btn"><i data-lucide="settings" class="q-icon q-icon-sm"></i><span>Server Settings</span></button>' +
         '    <button type="button" class="ui primary button" id="q-add-wg-btn"><i data-lucide="plus" class="q-icon q-icon-sm"></i><span>Add WireGuard Peer</span></button>' +
         '  </div>' +
@@ -425,9 +428,48 @@
       renderContent();
     });
 
+    $container.on('change.qVpn', '#q-wg-top-enabled', function () {
+      if (!state.vpn || !state.vpn.wireguard) return;
+      var enabled = this.checked;
+      var wg = state.vpn.wireguard;
+      var fw = state.vpn.firewallConfig || {};
+      Hive.services.vpn
+        .stageServer({
+          enabled: enabled,
+          tunnelSubnet: wg.tunnelSubnet || '10.66.66.1/24',
+          listenPort: wg.listenPort || 51820,
+          endpointHost: wg.endpointHost || '',
+          dns: wg.dns || '192.168.10.1',
+          exposeWireguard: enabled ? true : Boolean(fw.exposeWireguard)
+        })
+        .then(function () {
+          Hive.ui.notify({
+            title: 'WireGuard ' + (enabled ? 'Enabled' : 'Disabled'),
+            message: 'wg0 server state queued in pending changes.',
+            type: 'info',
+            displayTime: 2200
+          });
+        });
+    });
+
     $container.on('click.qVpn', '#q-wg-srv-btn', openServerModal);
     $container.on('click.qVpn', '#q-add-wg-btn', function () { openWgPeerModal(null); });
-    $container.on('click.qVpn', '#q-wg-refresh-btn', loadAndRender);
+    $container.on('click.qVpn', '#q-wg-refresh-btn', function () {
+      var $btn = $(this);
+      if ($btn.hasClass('loading')) return;
+      $btn.addClass('loading disabled');
+      Hive.services.vpn
+        .getOverview()
+        .then(function (data) {
+          if (!state.$root) return;
+          state.vpn = data;
+          renderContent();
+          Hive.ui.notify({ title: 'Handshakes Refreshed', message: 'Updated live WireGuard peer counters.', type: 'info', displayTime: 1800 });
+        })
+        .finally(function () {
+          if (state.$root) $btn.removeClass('loading disabled');
+        });
+    });
     $container.on('click.qVpn', '.q-wg-edit-btn', function () { openWgPeerModal($(this).attr('data-id')); });
     $container.on('click.qVpn', '.q-wg-export-btn', function () { openExportModal($(this).attr('data-id')); });
 
@@ -460,22 +502,27 @@
 
     $(document).on('click.qVpnModal', '#q-wg-exp-download', function () {
       var text = $('#q-wg-exp-code').text();
-      var blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
-      var url = URL.createObjectURL(blob);
-      var a = document.createElement('a');
-      a.href = url;
-      a.download = state.exportPeerName + '.conf';
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
+      Hive.ui.downloadBlob(state.exportPeerName + '.conf', text, 'text/plain;charset=utf-8');
       Hive.ui.notify({ title: 'Profile Exported', message: 'Downloaded ' + state.exportPeerName + '.conf.', type: 'info' });
     });
 
     state.stateListener = function (e) {
       var reason = e && e.detail ? e.detail.reason : '';
-      if (reason === 'telemetry' || reason === 'inline-toggle' || reason === 'flows-tick' || reason === 'audit') return;
-      loadAndRender();
+      if (Hive.store.isRuntimeOnlyReason(reason)) return;
+      if (reason === 'inline-toggle') {
+        var cur = Hive.store.getState();
+        state.vpn = {
+          wireguard: JSON.parse(JSON.stringify(cur.vpn.wireguard)),
+          firewallConfig: JSON.parse(JSON.stringify(cur.firewallConfig))
+        };
+        return;
+      }
+      var st = Hive.store.getState();
+      state.vpn = {
+        wireguard: JSON.parse(JSON.stringify(st.vpn.wireguard)),
+        firewallConfig: JSON.parse(JSON.stringify(st.firewallConfig))
+      };
+      renderContent();
     };
     window.addEventListener('hive:statechange', state.stateListener);
   }

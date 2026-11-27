@@ -65,8 +65,9 @@
       var frac = g / gridLines;
       var gy = pad.top + frac * plotH;
       var gVal = Math.round(yMax * (1 - frac));
+      var gLabel = gVal >= 1000 ? ((gVal % 1000 === 0 ? (gVal / 1000).toFixed(0) : (gVal / 1000).toFixed(1)) + 'G') : (gVal + 'M');
       gridHtml += '<line class="q-chart-grid-line" x1="' + pad.left + '" y1="' + gy.toFixed(1) + '" x2="' + (W - pad.right) + '" y2="' + gy.toFixed(1) + '"></line>';
-      gridHtml += '<text class="q-chart-axis-text" x="' + (pad.left - 8) + '" y="' + (gy + 3.5).toFixed(1) + '" text-anchor="end">' + gVal + 'M</text>';
+      gridHtml += '<text class="q-chart-axis-text" x="' + (pad.left - 8) + '" y="' + (gy + 3.5).toFixed(1) + '" text-anchor="end">' + gLabel + '</text>';
     }
 
     var xLabelsHtml = '';
